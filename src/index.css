@@ -1,0 +1,98 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { color-scheme: dark; }
+
+html, body, #root { height: 100%; }
+
+body {
+  margin: 0;
+  background: #07110F;
+  color: #EAF3EF;
+  font-family: 'Inter', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior-y: none;
+}
+
+h1, h2, h3, .font-display { font-family: 'Sora', system-ui, sans-serif; letter-spacing: -0.02em; }
+
+/* App is a phone-width column centered on larger screens */
+.app-shell {
+  max-width: 480px;
+  margin: 0 auto;
+  min-height: 100dvh;
+  position: relative;
+  padding-bottom: 120px; /* room for floating nav */
+}
+
+/* Inputs */
+.input {
+  width: 100%;
+  background: rgba(255,255,255,0.02);
+  border: 1px solid #1E3A34;
+  border-radius: 16px;
+  padding: 16px;
+  color: #EAF3EF;
+  font-size: 16px;
+  outline: none;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+.input::placeholder { color: #5A6E68; }
+.input:focus { border-color: #2FE6A8; box-shadow: 0 0 0 3px rgba(47,230,168,0.15); }
+
+.label { display:block; font-size: 15px; color:#EAF3EF; margin-bottom: 8px; font-weight:500; }
+
+/* Buttons */
+.btn-primary {
+  width: 100%;
+  background: #2FE6A8;
+  color: #05201A;
+  border: none;
+  border-radius: 16px;
+  padding: 18px;
+  font-weight: 700;
+  font-size: 17px;
+  cursor: pointer;
+  box-shadow: 0 0 24px rgba(47,230,168,0.35);
+  transition: transform .06s ease, opacity .15s ease, box-shadow .2s ease;
+}
+.btn-primary:active { transform: translateY(1px); }
+.btn-primary:disabled { opacity: .5; cursor: not-allowed; box-shadow: none; }
+
+.btn-ghost {
+  width: 100%;
+  background: rgba(47,230,168,0.06);
+  color: #EAF3EF;
+  border: 1px solid #1E3A34;
+  border-radius: 16px;
+  padding: 18px;
+  font-weight: 600;
+  font-size: 16px;
+  cursor: pointer;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
+
+/* Spinner */
+.spinner {
+  width: 22px; height: 22px;
+  border: 2.5px solid rgba(5,32,26,0.35);
+  border-top-color: #05201A;
+  border-radius: 50%;
+  animation: spin .8s linear infinite;
+}
+.spinner-mint {
+  border: 2.5px solid rgba(47,230,168,0.2);
+  border-top-color: #2FE6A8;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* subtle pulse for the generating state */
+@keyframes pulseGlow {
+  0%,100% { box-shadow: 0 0 0 0 rgba(47,230,168,0.0); }
+  50% { box-shadow: 0 0 24px 2px rgba(47,230,168,0.25); }
+}
+.pulsing { animation: pulseGlow 1.8s ease-in-out infinite; }
