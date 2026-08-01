@@ -24,11 +24,31 @@ export default function Intake() {
   const [busy, setBusy] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [checking, setChecking] = useState(false)
   const [err, setErr] = useState('')
   // ONE piece of state for "may I generate, and why not". Holding the
   // allowance and the cooldown separately let them contradict each other on
   // screen — "3 changes left, no waiting" directly above "wait 3 days".
   const [gate, setGate] = useState({ kind: 'open' })
+
+  // Re-read the gate from the database. Split out from the initial load so
+  // the cooldown banner can offer a re-check: a cooldown set from a server
+  // refusal is otherwise permanent until a page reload, which is a trap when
+  // the refusal was wrong (a stale deploy of the Edge Function will refuse a
+  // plan the row plainly allows). The row is the source of truth here, and
+  // asking it again costs one query.
+  async function refreshGate() {
+    if (!user?.id) return
+    setChecking(true)
+    setErr('')
+    try {
+      setGate(planGate(await getLatestPlan(user.id)))
+    } catch (e) {
+      setErr(e?.message || 'Could not check your plan status.')
+    } finally {
+      setChecking(false)
+    }
+  }
 
   // Load the form. Two sources, newest-wins:
   //   1. `plans.intake` — the snapshot the last plan was built from.
@@ -139,6 +159,19 @@ export default function Intake() {
             Your last plan is recent. You can generate a fresh one in <b className="text-cream">{pluralDays(gate.daysLeft)}</b>.
             You can still edit and <b className="text-cream">save</b> your answers now — they will be
             waiting when the next plan is due.
+            {/* An escape hatch, not decoration. This banner is also what you
+                get when the server refuses, and a server can be wrong about
+                you — an out-of-date deploy of generate-plan will refuse a
+                plan your own row says you are entitled to. Without this the
+                screen stays locked until a reload, with no hint that a reload
+                is what's needed. */}
+            <button
+              className="block mt-3 text-mint underline disabled:opacity-60"
+              onClick={refreshGate}
+              disabled={checking}
+            >
+              {checking ? 'Checking…' : 'Check again'}
+            </button>
           </div>
         )}
 

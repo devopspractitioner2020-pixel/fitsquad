@@ -11,7 +11,8 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "seed": "node scripts/seed.mjs",
-    "seed:reset": "node scripts/seed.mjs --reset"
+    "seed:reset": "node scripts/seed.mjs --reset",
+    "seed:weights": "node scripts/seed-weights.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",

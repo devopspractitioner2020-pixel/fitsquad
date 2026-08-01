@@ -417,6 +417,46 @@ describe('the two banners can never contradict each other', () => {
     expect(generateBtn()).toBeDisabled()
   })
 
+  // Adopting the server's verdict is right, but it must not be a one-way
+  // door. A server can be refusing wrongly — an out-of-date deploy of
+  // generate-plan refuses plans the row plainly allows — and before this the
+  // only way back was to know that a page reload would clear it.
+  it('lets you re-check after the server refuses, and reopens if the row allows', async () => {
+    getLatestPlan.mockResolvedValue(readyFirst(0, 4))
+    await renderIntake()
+    expect(await screen.findByText(/3 changes left/i)).toBeInTheDocument()
+
+    const err = new Error('You can generate a fresh plan in 3 days.')
+    err.status = 429
+    err.daysLeft = 3
+    generatePlan.mockRejectedValue(err)
+
+    await u.click(ackBox())
+    await u.click(generateBtn())
+    await waitFor(() => expect(waitBanner()).toBeInTheDocument())
+
+    await u.click(screen.getByRole('button', { name: /check again/i }))
+
+    // The row never changed, so the allowance comes back and so does the
+    // working button.
+    await waitFor(() => expect(waitBanner()).toBeNull())
+    expect(screen.getByText(/3 changes left/i)).toBeInTheDocument()
+    expect(generateBtn()).not.toBeDisabled()
+  })
+
+  it('keeps the wait when a re-check confirms it', async () => {
+    getLatestPlan.mockResolvedValue(readyFirst(3, 4))
+    await renderIntake()
+    await waitFor(() => expect(waitBanner()).toBeInTheDocument())
+
+    await u.click(screen.getByRole('button', { name: /check again/i }))
+
+    await waitFor(() => expect(getLatestPlan).toHaveBeenCalledTimes(2))
+    expect(waitBanner()).toBeInTheDocument()
+    expect(freeBanner()).toBeNull()
+    expect(generateBtn()).toBeDisabled()
+  })
+
   it('the button label agrees with whichever banner is showing', async () => {
     getLatestPlan.mockResolvedValue(readyFirst(3, 4))
     await renderIntake()

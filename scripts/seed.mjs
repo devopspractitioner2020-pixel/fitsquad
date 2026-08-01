@@ -23,6 +23,7 @@
  */
 
 import { createClient } from '@supabase/supabase-js'
+import { rng, weightSeries } from './weight-series.mjs'
 
 const URL = process.env.SUPABASE_URL
 const KEY = process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -86,16 +87,17 @@ const TIPS = [
   },
 ]
 
-const DAYS = 56 // eight weeks of history
+const DAYS = 56        // eight weeks of posts
+const WEIGH_DAYS = 119 // seventeen weeks of weigh-ins
 const day = (n) => new Date(Date.now() - n * 864e5).toISOString()
 
+// Deliberately longer than the post history, for two reasons: people step on
+// a scale for far longer than they post about it, and the weight chart needs
+// more weeks than fit on one screen or the horizontal scrolling is untested.
+//
 // Deterministic PRNG so re-running produces the same demo squad rather than
 // a different-looking one every time.
-let seed = 20260727
-const rnd = () => {
-  seed = (seed * 1103515245 + 12345) & 0x7fffffff
-  return seed / 0x7fffffff
-}
+const rnd = rng(20260727)
 const pick = (arr) => arr[Math.floor(rnd() * arr.length)]
 
 async function ensureUser({ email, name }) {
@@ -116,31 +118,12 @@ async function ensureUser({ email, name }) {
   return data.user.id
 }
 
-/**
- * A weight series that looks like a real person: a downward trend with daily
- * noise, the odd plateau, and a small bump after a heavy weekend. A clean
- * straight line would make the chart look fake and hide any rendering bug in
- * the shape of the data.
- */
-function weightSeries(start, target, keen) {
-  const out = []
-  let w = start
-  const perDay = ((start - target) / DAYS) * keen
-  for (let d = DAYS; d >= 0; d -= 1) {
-    if (d % 7 === 0 || rnd() < 0.45) {
-      const plateau = d > 20 && d < 30 ? 0.25 : 1
-      const weekendBump = d % 7 === 6 ? 0.35 : 0
-      w = w - perDay * plateau + (rnd() - 0.5) * 0.45 + weekendBump
-      out.push({ created_at: day(d), weight_kg: +w.toFixed(1) })
-    }
-  }
-  return out
-}
-
 async function seedPerson(userId, person) {
   const posts = []
-  const weighs = weightSeries(person.start, person.target, person.keen)
-    .map((w) => ({ ...w, user_id: userId, note: null }))
+  const weighs = weightSeries({
+    start: person.start, target: person.target, keen: person.keen,
+    days: WEIGH_DAYS, rnd,
+  }).map((w) => ({ ...w, user_id: userId, note: null }))
 
   for (let d = DAYS; d >= 0; d -= 1) {
     if (rnd() < 0.42 * person.keen) {

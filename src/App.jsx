@@ -13,7 +13,10 @@ import LogModal from './components/LogModal'
 
 export default function App() {
   const { user, loading } = useAuth()
-  const [logOpen, setLogOpen] = useState(false)
+  // null = closed. Otherwise the step to open on: 'menu' for the type picker,
+  // or a type key to skip straight to that form. One value rather than an
+  // open flag plus a type, so "closed but with a type" cannot happen.
+  const [log, setLog] = useState(null)
   const [refreshKey, setRefreshKey] = useState(0)
   const nav = useNavigate()
 
@@ -27,7 +30,7 @@ export default function App() {
     <>
       <Routes key={refreshKey}>
         <Route path="/feed" element={<Feed />} />
-        <Route path="/me" element={<Me />} />
+        <Route path="/me" element={<Me onLogWeight={() => setLog('weigh')} />} />
         <Route path="/squad" element={<Squad />} />
         <Route path="/intake" element={<Intake />} />
         <Route path="/plan" element={<PlanView />} />
@@ -35,12 +38,24 @@ export default function App() {
         <Route path="*" element={<Navigate to="/feed" replace />} />
       </Routes>
 
-      <BottomNav onAdd={() => setLogOpen(true)} />
+      <BottomNav onAdd={() => setLog('menu')} />
 
+      {/* Keyed on the step so each opening starts from a clean form — and so
+          opening straight onto 'weigh' actually lands there rather than
+          reusing whatever step the last session ended on. */}
       <LogModal
-        open={logOpen}
-        onClose={() => setLogOpen(false)}
-        onLogged={() => { setRefreshKey((k) => k + 1); nav('/feed') }}
+        key={log ?? 'closed'}
+        open={log != null}
+        initialType={log === 'menu' ? null : log}
+        onClose={() => setLog(null)}
+        onLogged={(kind) => {
+          setRefreshKey((k) => k + 1)
+          // A weigh-in is not a post — it never appears in the feed, so
+          // sending someone there after one shows them no evidence that
+          // anything happened. Staying put puts them in front of the chart
+          // that just moved.
+          if (kind !== 'weigh') nav('/feed')
+        }}
       />
     </>
   )

@@ -23,7 +23,6 @@ idempotent, so running them twice is harmless.
    first-plan revision budget.
 5. `0006_saved_posts.sql` — bookmarks. Saves are private to the saver and
    cascade on post delete, so a saved list never shows a post that is gone.
-
 Confirm all four:
 
 ```sql
@@ -391,12 +390,31 @@ npm run seed
 ```
 
 Creates `test@example.com` (password `fitsquad123`) plus three squad-mates in
-one squad, with eight weeks of weigh-ins, meals, workouts and tips, and a
+one squad, with eight weeks of posts, **seventeen weeks of weigh-ins**, and a
 finished FitPlan with 2 of 3 changes left — so you can exercise the tweak and
 regenerate paths without waiting out a cooldown. Three of the seeded tips
 carry video links, so the embeds are easy to find in the feed.
 
+The weigh-in history runs longer than the post history on purpose: people step
+on a scale for far longer than they post about it, and the weight chart needs
+more weeks than fit on one screen or the horizontal scrolling never gets
+exercised. One week is deliberately left empty, so the gap handling shows.
+
 `npm run seed:reset` wipes the seeded rows first.
+
+### Just a weight history, on your own account
+
+The full seed is for a throwaway project — it invents four users. If you only
+want your own login to have a chart to look at:
+
+```bash
+npm run seed:weights -- --email you@example.com
+npm run seed:weights -- --email you@example.com --weeks 30 --replace
+```
+
+The account has to exist already (sign up in the app first). `--replace`
+clears that account's existing weigh-ins instead of adding to them; `--start`
+and `--target` set where the trend begins and where it is heading.
 
 > The service-role key bypasses Row Level Security completely. Keep it in your
 > shell, never in `.env` — Vite inlines `.env` into the browser bundle — and
@@ -560,6 +578,33 @@ Check the build log for `npm run build` succeeding and `wrangler deploy`
 uploading assets. If the log ends at the deploy step with *"Missing
 entry-point"*, `wrangler.jsonc` was not committed — see 6.1.
 
+### 6.6b Deploying by hand from your laptop
+
+Cloudflare's pipeline runs two commands, in this order: **build**, then
+**deploy**. Running `npx wrangler deploy` on its own runs the second half
+without the first, and fails:
+
+```
+✘ ERROR  The directory specified by the "assets.directory" field in your
+  configuration file does not exist: /Users/…/fit-squad/dist
+```
+
+That is not a misconfiguration. `dist/` is build output — it is in
+`.gitignore` and does not exist in a fresh clone or after `git clean`. There
+is nothing to upload until Vite has written it. Run both halves:
+
+```bash
+npm run build && npx wrangler deploy
+```
+
+The `&&` matters: if the build fails, you do not want the previous build's
+`dist/` shipped to production silently.
+
+Pushing to `main` is still the normal path — Cloudflare builds and deploys on
+its own, and the deployed bundle then matches the commit. A hand deploy ships
+whatever is on your laptop right now, including uncommitted edits, so keep it
+for testing and let git be the record of what is live.
+
 ### 6.7 Confirm the security headers survived
 
 `public/_headers` and `public/_redirects` are copied into `dist/` by Vite, and
@@ -644,7 +689,8 @@ supabase functions deploy resolve-link
 | Deploy fails with "Missing entry-point" | `wrangler.jsonc` not committed | It is a static deploy with no Worker script; wrangler still needs the config. See §6.1. |
 | Hard refresh on `/me` 404s | `not_found_handling` missing from `wrangler.jsonc` | Should be `"single-page-application"`. |
 | Plan shows as one long document with no tabs | It is a plan generated before the structured-output rewrite | Expected — the app now says so in a banner above it. Generate a fresh plan for the tabbed layout. |
-| App says "n changes left" but generating is refused with a cooldown | The **deployed** `generate-plan` predates the first-plan revision window | `supabase functions deploy generate-plan`. The browser and the function must agree on the rule; only the function is authoritative. |
+| "n changes left" on load, but clicking generate is refused with a cooldown, and the banner then flips to the cooldown and stays there | The **deployed** `generate-plan` predates the first-plan revision window. The client adopts the server's verdict — correctly, it is the authority — so the screen shows the refusal from then on | `supabase functions deploy generate-plan`, then **Check again** in the banner (or reload). Confirm the row first: `select id,status,is_first_plan,refinements_used,created_at from plans order by created_at desc limit 3;` — `is_first_plan = true` with `refinements_used < 3` means the row allows it and only the deploy was stale. |
+| `wrangler deploy`: *the directory specified by the "assets.directory" field … does not exist* | `npm run build` was not run — `dist/` is gitignored build output | `npm run build && npx wrangler deploy`. See §6.6b. |
 | Feed loads but names are blank | Migration 0002 not run | Run it; it backfills existing users. |
 | Photos upload but don't display | Bucket not public | `select id, public from storage.buckets where id = 'post-photos';` must be `true`. |
 | Deep links 404 | `_redirects` missing from build | Confirm `dist/_redirects` exists after `npm run build`. |

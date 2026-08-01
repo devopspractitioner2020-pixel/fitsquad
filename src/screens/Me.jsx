@@ -1,13 +1,18 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip } from 'recharts'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import { getLatestPlan, effectiveStatus } from '../lib/api'
 import { getSavedCounts, KIND_TO_SLUG } from '../lib/saved'
+import { weeklyWeights, weightChange } from '../lib/weight'
 import { Header } from '../components/ui'
 
-export default function Me() {
+// One week of the chart, in pixels. Wide enough that the dots do not collide
+// with a fingertip; narrow enough that a couple of months is one flick.
+const WEEK_PX = 56
+
+export default function Me({ onLogWeight }) {
   const { user, profile, signOut } = useAuth()
   const nav = useNavigate()
   const [plan, setPlan] = useState(null)
@@ -57,14 +62,22 @@ export default function Me() {
     return () => clearInterval(pollRef.current)
   }, [planStatus, plan?.id])
 
-  const first = weighIns[0]?.weight_kg
   const current = weighIns[weighIns.length - 1]?.weight_kg
-  const change = first != null && current != null ? +(current - first).toFixed(1) : null
+  const change = weightChange(weighIns)
 
-  const chartData = weighIns.map((w) => ({
-    d: new Date(w.created_at).toLocaleDateString(undefined, { day: '2-digit', month: 'short' }),
-    kg: w.weight_kg,
-  }))
+  // One point per calendar week, averaged. See src/lib/weight.js for why.
+  const weeks = useMemo(() => weeklyWeights(weighIns), [weighIns])
+  const logged = weeks.reduce((n, w) => n + w.count, 0)
+  const chartMinWidth = weeks.length * WEEK_PX
+
+  // Open on the most recent week. The chart grows to the right, so its
+  // natural starting position is the oldest data — which is the least
+  // interesting thing in it and makes a long history look empty on open.
+  const scrollerRef = useRef(null)
+  useEffect(() => {
+    const el = scrollerRef.current
+    if (el) el.scrollLeft = el.scrollWidth
+  }, [weeks.length])
 
   return (
     <div className="app-shell">
@@ -100,7 +113,13 @@ export default function Me() {
         <div className="bg-card border border-line rounded-xl2 p-5 mb-6">
           <div className="flex items-center justify-between mb-2">
             <h3 className="font-display text-[22px] font-700">Weight over time</h3>
-            <button onClick={() => nav('/feed')} className="text-[#05201A] bg-mint rounded-full px-4 py-2 font-700 text-sm shadow-glow">⚖ Log weigh-in</button>
+            {/* This used to navigate to /feed, which is not where you log a
+                weigh-in and not where the result of one shows up. It opens
+                the log sheet on the weight step now. */}
+            <button
+              onClick={() => onLogWeight?.()}
+              className="text-[#05201A] bg-mint rounded-full px-4 py-2 font-700 text-sm shadow-glow"
+            >⚖ Log weigh-in</button>
           </div>
           {current != null ? (
             <>
@@ -109,16 +128,43 @@ export default function Me() {
                 <span className="text-muted">kg</span>
                 {change != null && <span className="ml-auto text-mint">{change > 0 ? '+' : ''}{change} since start</span>}
               </div>
-              <div className="h-44 -ml-2">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={chartData} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
-                    <XAxis dataKey="d" tick={{ fill: '#7C938C', fontSize: 12 }} axisLine={false} tickLine={false} minTickGap={24} />
-                    <YAxis domain={['dataMin - 1', 'dataMax + 1']} tick={{ fill: '#7C938C', fontSize: 12 }} axisLine={false} tickLine={false} width={38} />
-                    <Tooltip contentStyle={{ background: '#0C1A18', border: '1px solid #1E3A34', borderRadius: 12, color: '#EAF3EF' }} />
-                    <Line type="monotone" dataKey="kg" stroke="#2FE6A8" strokeWidth={3} dot={{ r: 4, fill: '#2FE6A8' }} activeDot={{ r: 6 }} />
-                  </LineChart>
-                </ResponsiveContainer>
+
+              {/* Horizontally scrollable: the chart is sized by how many weeks
+                  exist, not by how many fit, so a long history stays readable
+                  instead of squeezing a year into a thumb's width. */}
+              <div
+                ref={scrollerRef}
+                data-testid="weight-scroller"
+                className="overflow-x-auto overflow-y-hidden -mx-1 px-1"
+              >
+                <div className="h-44" style={{ minWidth: `${chartMinWidth}px` }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={weeks} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
+                      <XAxis dataKey="label" tick={{ fill: '#7C938C', fontSize: 12 }} axisLine={false} tickLine={false} minTickGap={16} />
+                      <YAxis domain={['dataMin - 1', 'dataMax + 1']} tick={{ fill: '#7C938C', fontSize: 12 }} axisLine={false} tickLine={false} width={38} />
+                      <Tooltip
+                        contentStyle={{ background: '#0C1A18', border: '1px solid #1E3A34', borderRadius: 12, color: '#EAF3EF' }}
+                        labelFormatter={(l) => `Week of ${l}`}
+                        formatter={(v) => [`${v} kg`, 'Weekly average']}
+                      />
+                      {/* connectNulls keeps the trend line continuous across a
+                          week nobody logged. The missing dot is the signal
+                          that the week is empty — a broken line would read as
+                          a break in the progress, which it is not. */}
+                      <Line
+                        type="monotone" dataKey="kg" connectNulls
+                        stroke="#2FE6A8" strokeWidth={3}
+                        dot={{ r: 4, fill: '#2FE6A8' }} activeDot={{ r: 6 }}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
               </div>
+
+              <p className="text-muted-2 text-[12px] mt-2">
+                Weekly average of {logged} weigh-in{logged === 1 ? '' : 's'} over {weeks.length} week{weeks.length === 1 ? '' : 's'}
+                {weeks.length > 6 ? ' · swipe the chart for earlier weeks' : ''}.
+              </p>
             </>
           ) : (
             <p className="text-muted py-6">No weigh-ins yet. Tap + and choose “Weigh in” to start your line.</p>

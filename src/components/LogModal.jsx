@@ -41,9 +41,12 @@ const TYPES = [
   { key: 'tip', label: 'Share tip', icon: 'M12 3l2 5 5 .5-4 3.5 1.3 5L12 19l-4.3 3 1.3-5-4-3.5 5-.5L12 3z' },
 ]
 
-export default function LogModal({ open, onClose, onLogged }) {
+export default function LogModal({ open, onClose, onLogged, initialType = null }) {
   const { user, profile } = useAuth()
-  const [type, setType] = useState(null)
+  // Openers that know what the person is here to do (the Log weigh-in button
+  // on Me) skip the picker. Back still returns to it, so the shortcut never
+  // costs anyone access to the other three.
+  const [type, setType] = useState(initialType)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   // shared fields
@@ -61,7 +64,7 @@ export default function LogModal({ open, onClose, onLogged }) {
   if (!open) return null
 
   function reset() {
-    setType(null); setTitle(''); setNote(''); setFile(null); setMinutes('')
+    setType(initialType); setTitle(''); setNote(''); setFile(null); setMinutes('')
     setMealType('Lunch'); setIsCheat(false); setWeight(''); setHealthy(true)
     setVideoUrl(''); setErr('')
   }
@@ -132,7 +135,9 @@ export default function LogModal({ open, onClose, onLogged }) {
         })
         if (error) throw error
       }
-      onLogged?.()
+      // Pass the kind along: the caller decides where to go next, and a
+      // weigh-in and a post deserve different answers.
+      onLogged?.(type)
       close()
     } catch (e) {
       setErr(e.message ?? 'Something went wrong. Try again.')
