@@ -3,6 +3,10 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import { Header } from '../components/ui'
 
+// Matches the name the signup trigger gives a squad in migration 0004, so a
+// squad created here and one created at signup are indistinguishable.
+const defaultSquadName = (displayName) => `${displayName?.trim() || 'My'}'s Squad`
+
 // The leaderboard and the squad roster.
 //
 // Note what is NOT here: any filtering by squad. Row Level Security scopes
@@ -10,18 +14,24 @@ import { Header } from '../components/ui'
 // `select *` already returns exactly your squad's rows. Putting the filter in
 // the query too would be duplicated logic that could drift from the policy.
 export default function Squad() {
-  const { user, signOut } = useAuth()
+  const { user, profile, signOut } = useAuth()
   const [range, setRange] = useState('week') // week | all
   const [rows, setRows] = useState([])
   const [squads, setSquads] = useState([])
+  const [loadedSquads, setLoadedSquads] = useState(false)
   const [showJoin, setShowJoin] = useState(false)
   const [code, setCode] = useState('')
+  const [newName, setNewName] = useState('')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const [copied, setCopied] = useState('')
 
   async function loadSquads() {
     const { data, error } = await supabase.rpc('my_squads')
+    // `loadedSquads` distinguishes "you have no squad" from "we have not
+    // asked yet". Without it the create-a-squad panel flashes on screen for
+    // every user on every visit, in the moment before the answer arrives.
+    setLoadedSquads(true)
     if (error) { setErr(error.message); return }
     setSquads(data ?? [])
   }
@@ -87,6 +97,28 @@ export default function Squad() {
     }
   }
 
+  // The missing half of the squad feature. `create_squad` has existed in the
+  // database since migration 0004 and was granted to every authenticated
+  // user — but nothing in the app ever called it. So anyone who ended up
+  // without a squad (an account created before the signup trigger existed, a
+  // trigger that failed, or simply leaving your last squad, which the RLS
+  // policy permits) could only ever join someone else's. There was no way
+  // back to having one of your own.
+  async function createSquad() {
+    setErr(''); setBusy(true)
+    try {
+      const name = newName.trim() || defaultSquadName(profile?.display_name)
+      const { error } = await supabase.rpc('create_squad', { squad_name: name })
+      if (error) throw error
+      setNewName('')
+      await Promise.all([loadSquads(), load()])
+    } catch (e) {
+      setErr(e?.message || 'Could not create your squad.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   async function joinSquad() {
     setErr(''); setBusy(true)
     try {
@@ -139,6 +171,37 @@ export default function Squad() {
                 {copied === 'link' ? 'Copied ✓' : 'Copy invite link'}
               </button>
             </div>
+          </div>
+        )}
+
+        {/* No squad. Previously this screen rendered nothing here at all —
+            no code, no member count, no explanation — and the only action on
+            offer was joining someone else's squad with a code you would have
+            to go and ask for. */}
+        {loadedSquads && !squad && (
+          <div className="bg-card border border-mint/40 rounded-xl2 p-5 mb-6">
+            <div className="font-display text-[22px] font-700 mb-1">You’re not in a squad yet</div>
+            <p className="text-muted text-sm mb-4">
+              Create one and you’ll get a join code to share. Your logs stay with you either
+              way — a squad decides who can see them.
+            </p>
+            <label className="block">
+              <span className="label">Squad name</span>
+              <input
+                className="input"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                placeholder={defaultSquadName(profile?.display_name)}
+                maxLength={60}
+              />
+            </label>
+            <button
+              className="btn-primary w-full mt-3 flex items-center justify-center gap-2"
+              onClick={createSquad}
+              disabled={busy}
+            >
+              {busy ? <><span className="spinner" /> Creating…</> : 'Create my squad'}
+            </button>
           </div>
         )}
 

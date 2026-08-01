@@ -23,8 +23,12 @@ idempotent, so running them twice is harmless.
    first-plan revision budget.
 5. `0006_saved_posts.sql` — bookmarks. Saves are private to the saver and
    cascade on post delete, so a saved list never shows a post that is gone.
+6. `0007_squad_for_everyone.sql` — gives a squad to any account that has
+   none. 0004 covered new signups and the users who existed when it ran;
+   anyone created in between, or who left their last squad, was left with a
+   Squad screen that had no join code and no way to get one.
 
-Confirm all five:
+Confirm all six:
 
 ```sql
 select tgname from pg_trigger where tgname = 'on_auth_user_created';
@@ -34,6 +38,11 @@ select count(*) as squads, (select count(*) from squad_members) as members from 
 select column_name from information_schema.columns
  where table_name = 'posts' and column_name = 'video_url';
 select to_regclass('public.saved_posts') as saved_posts;
+
+-- Nobody without a squad. Should return zero rows.
+select au.email from auth.users au
+left join public.squad_members m on m.user_id = au.id
+where m.user_id is null;
 ```
 
 Every user should have a squad. If any don't:
@@ -639,9 +648,146 @@ You should see all three. If the CSP is missing, the file did not make it into
 
 ### 6.8 Custom domain
 
-**Your Worker → Settings → Domains & Routes → Add → Custom domain**, then
-`fitsquad.inkaitech.com`. Works as soon as the zone's DNS is on Cloudflare;
-the certificate is issued automatically, usually within a few minutes.
+**This step is optional.** The `*.workers.dev` URL from 6.6 is a real, working,
+HTTPS site. Everything below is only to put the app on
+`fitsquad.inkaitech.com` instead. Skip it and come back later if you want to.
+
+The earlier version of this section was one sentence long and assumed the
+hard part was already done. It is not, so here is the whole thing.
+
+#### Why "No zones found" appears
+
+Open **Your Worker → Domains → Add → Custom domain** today and the search box
+says *No zones found*. That is not a bug and not a permissions problem: a
+**zone** is a domain that Cloudflare runs the DNS for, and `inkaitech.com`
+currently points at Hostinger —
+
+```
+ns1.dns-parking.com
+ns2.dns-parking.com
+```
+
+Cloudflare will not offer you a domain it does not serve. A Worker Custom
+Domain requires the domain to be an **active zone on the same Cloudflare
+account**, and Cloudflare's partial (CNAME-only) setup does not work for
+Custom Domains — that is a Business-plan feature and it is excluded here
+regardless. So the only route on a free plan is to move the domain's
+nameservers from Hostinger to Cloudflare.
+
+Nothing is being taken away from Hostinger. They keep the registration — you
+still renew there, and the domain stays yours. Only the DNS lookups move.
+
+#### ⚠️ Read this before you touch anything: your email
+
+Moving nameservers moves **all** DNS for `inkaitech.com`, not just the web
+records. Your Hostinger checklist shows a business `@inkaitech.com` mailbox,
+and mail routing lives in the `MX` records — plus `SPF`, `DKIM` and `DMARC`
+`TXT` records that decide whether your mail is trusted or lands in spam.
+
+If those do not make it across, **email stops working** and it is not obvious
+for hours. Cloudflare's importer scans and copies what it can find, but it can
+miss records, so verify by hand rather than trusting the scan. Step 3 below is
+that check. Do not skip it.
+
+#### 1. Write down your current DNS
+
+In Hostinger: **hPanel → DNS → inkaitech.com → DNS / Nameservers → DNS
+records**. Screenshot the whole table, or export it. You want every row:
+`A`, `CNAME`, `MX`, `TXT`, `SRV`. This is your reference and your undo.
+
+#### 2. Add the domain to Cloudflare
+
+In the Cloudflare dashboard, **Add a domain** (top of the account home, or
+**Websites → Add a domain**). Enter `inkaitech.com` — the apex, no `www`, no
+`fitsquad.` prefix. Choose **Free**. Cloudflare scans Hostinger's DNS and
+shows you what it found.
+
+#### 3. Check the imported records against your screenshot
+
+Compare row by row. Pay attention to:
+
+- every **MX** record, including its priority number
+- the **SPF** `TXT` record — the one starting `v=spf1`
+- any **DKIM** `TXT` record — usually on a name like `hostingermail._domainkey`
+- the **DMARC** `TXT` record on `_dmarc`
+- any `A` or `CNAME` for the existing website and for `www`
+
+Add anything missing by hand before continuing. Nothing has changed yet, so
+this is the free moment to get it right.
+
+#### 3b. Turn the orange clouds off first
+
+Cloudflare imports records with **Proxied** (orange cloud) switched on by
+default. Proxying means Cloudflare answers DNS for that name with its own IP
+and relays the traffic — which only works for HTTP and HTTPS. On anything
+else it does not degrade, it breaks:
+
+| Record | Proxy status | Why |
+|---|---|---|
+| `ftp` | **DNS only** | FTP is not HTTP. Cloudflare will not relay it, and the hostname stops resolving to your server. |
+| `autoconfig`, `autodiscover` | **DNS only** | Mail clients use these to find your mail server. Proxied, they answer with Cloudflare's IPs and the wrong certificate. |
+| `hostingermail-*`, anything under `_domainkey` | **DNS only** | This is DKIM. A proxied record returns Cloudflare's address instead of the key, so signature checks fail and your mail starts landing in spam. |
+| `MX`, `TXT`, `SRV` | not proxyable | No cloud icon at all — nothing to do. |
+| `inkaitech.com`, `www` | your call | These are the only genuinely web-facing records. |
+
+**The safest way through this migration is to set every record to DNS only
+(grey cloud) before you switch the nameservers.** DNS then behaves exactly as
+it does on Hostinger today, so if something breaks afterwards you know it was
+the nameserver change and not the proxy. Turn the orange cloud back on for
+`inkaitech.com` and `www` later, once you have confirmed the site and email
+still work.
+
+If you do proxy the apex, check **SSL/TLS → Overview** is set to **Full** or
+**Full (strict)**. **Flexible** makes Cloudflare talk to Hostinger over plain
+HTTP, which turns the padlock into a lie.
+
+The record for `fitsquad.inkaitech.com` is a separate matter: Cloudflare
+creates it itself in step 6, proxied, and that is correct — a Worker only
+runs on proxied traffic. Do not touch that one.
+
+#### 4. Point Hostinger at Cloudflare
+
+Cloudflare gives you two nameservers on the domain's **Overview** page, of the
+form `xxxx.ns.cloudflare.com`. Then in Hostinger:
+
+**hPanel → DNS → inkaitech.com → DNS / Nameservers → Change nameservers →
+Use custom nameservers**, paste both, save.
+
+That is the same **DNS / Nameservers** screen in your screenshot, where
+`ns1.dns-parking.com` is showing now.
+
+If Hostinger has DNSSEC switched on for the domain, turn it off first —
+DNSSEC signed by the old nameservers will make the domain unresolvable during
+the switch.
+
+#### 5. Wait
+
+Usually under an hour, occasionally up to 24. Cloudflare emails you and the
+zone flips to **Active**. Until then the Worker's Custom Domain dialog will
+still say *No zones found* — that is the wait, not a failure.
+
+#### 6. Now add the Custom Domain
+
+Back to **Your Worker → Domains → Add → Custom domain**. Type
+`fitsquad.inkaitech.com`. The search will now find the zone. Cloudflare
+creates the DNS record and issues the TLS certificate itself — no CNAME to
+copy, no certificate to request. A few minutes later the site answers on
+`https://fitsquad.inkaitech.com`.
+
+Verify:
+
+```bash
+curl -sI https://fitsquad.inkaitech.com | head -1     # expect HTTP/2 200
+```
+
+And confirm your email still arrives — send yourself one from an outside
+address.
+
+#### If you would rather not move the nameservers
+
+Keep using the `*.workers.dev` URL. It is HTTPS, it is fast, and nothing in
+the app depends on the domain. You can also add the custom domain months from
+now; the only thing that changes is the two values in Step 7 below.
 
 ### If you would rather use Pages
 
@@ -724,6 +870,9 @@ supabase functions deploy resolve-link
 | Video embed is a blank black box | CSP `frame-src` missing that host | `public/_headers` lists tiktok / instagram / youtube-nocookie. CSP frame blocks are near-silent — this is almost always the cause. |
 | "That link isn't recognised" for a good link | It is a profile link, not a video | The field now says so specifically. Open the video itself → Share → Copy link. |
 | Short link posts but shows a tap-through card | `resolve-link` not deployed, or TikTok refused | `supabase functions deploy resolve-link`, then check the curl below. The post is never lost over this. |
+| Worker → Domains → Add → Custom domain says *No zones found* | `inkaitech.com` is not a Cloudflare zone — its nameservers still point at Hostinger (`ns*.dns-parking.com`) | Add the domain to Cloudflare and move the nameservers. Custom Domains need an active zone on the same account; partial/CNAME setup is not supported for them. Full walkthrough in §6.8. |
+| Email stops arriving after moving nameservers | The `MX` / `SPF` / `DKIM` / `DMARC` records did not come across in Cloudflare's import | Re-add them in Cloudflare DNS from the screenshot you took in §6.8 step 1. Mail routing is DNS; moving nameservers moves it. |
+| Squad tab shows no join code and no member count, on one account but not another | That account has no `squad_members` row — created before the 0004 signup trigger existed, or it left its last squad | Run `0007_squad_for_everyone.sql`. The screen also has a **Create my squad** button now, which fixes it from the app without any SQL. |
 | Join code says no squad found | Code typed with an O or l | The alphabet excludes `0 O 1 I L` deliberately. Re-read the code. |
 | Saving does nothing, console shows `404` on `/rest/v1/saved_posts` | Migration 0006 not run | Run `0006_saved_posts.sql`. A PostgREST 404 on a collection means the relation is not in its schema cache. The app now says this in the card rather than only in the console. |
 | Saving still 404s right after running 0006 | Stale PostgREST schema cache | Rare — Supabase reloads automatically. Force it with `notify pgrst, 'reload schema';` in the SQL editor. |
