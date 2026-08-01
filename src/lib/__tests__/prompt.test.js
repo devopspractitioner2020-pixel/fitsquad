@@ -41,8 +41,12 @@ describe('buildUserMessage', () => {
     expect(msg).toContain('Foods they DISLIKE (never include): Greek yogurt')
   })
 
-  it('asks for the plan in the user\'s own language', () => {
-    expect(buildUserMessage({ name: 'Vic' })).toMatch(/same language as the free-text answers/i)
+  // Reversed deliberately: the plan used to be written in whatever language
+  // the answers were in, which produced Spanish day names and Spanish meal
+  // descriptions inside an English app.
+  it('asks for the plan in English whatever the answers are written in', () => {
+    expect(buildUserMessage({ name: 'Vic' })).toMatch(/entire plan in English/i)
+    expect(buildUserMessage({ name: 'Vic' })).not.toMatch(/same language/i)
   })
 
   it('handles a completely empty intake without throwing', () => {
@@ -134,5 +138,61 @@ describe('the schema and the prompt agree', () => {
     for (const forbidden of ['tdee', 'bmr', 'target_kcal', 'protein_g', 'carbs_g', 'fat_g']) {
       expect(keys).not.toContain(forbidden)
     }
+  })
+})
+
+describe('the language rule', () => {
+  // Plans were coming back in Spanish — Spanish day names, Spanish meal
+  // descriptions — inside an English app, because the prompt told the model
+  // to mirror the language of the answers.
+  it('tells the model to write in English regardless of the input language', () => {
+    expect(SYSTEM_GENERATE).toMatch(/write every piece of text in english/i)
+    expect(SYSTEM_GENERATE).toMatch(/read spanish, answer in english/i)
+  })
+
+  it('names day names specifically, since those slipped through most often', () => {
+    expect(SYSTEM_GENERATE).toMatch(/Monday, Tuesday/)
+    expect(SYSTEM_GENERATE).toMatch(/Never Lunes/)
+  })
+
+  // The exception the reader actually asked for: a dish name is a name.
+  it('keeps untranslatable dish names in their own language', () => {
+    expect(SYSTEM_GENERATE).toMatch(/lomo saltado/i)
+    expect(SYSTEM_GENERATE).toMatch(/no real English equivalent/i)
+  })
+
+  it('holds the line on refinements too, including plans already in Spanish', () => {
+    expect(SYSTEM_REFINE).toMatch(/stays in English/i)
+    expect(SYSTEM_REFINE).toMatch(/translate it as you go/i)
+  })
+
+  it('no longer asks for the answers\' language anywhere', () => {
+    expect(SYSTEM_GENERATE).not.toMatch(/same language as the user/i)
+    expect(SYSTEM_REFINE).not.toMatch(/the same language/i)
+  })
+})
+
+describe('the myths rule', () => {
+  it('asks for several, not one', () => {
+    expect(SYSTEM_GENERATE).toMatch(/THREE to FIVE/)
+    expect(PLAN_SCHEMA.properties.myths.minItems).toBe(3)
+    expect(PLAN_SCHEMA.properties.myths.maxItems).toBe(5)
+  })
+
+  it('makes them about foods rather than principles', () => {
+    expect(SYSTEM_GENERATE).toMatch(/about specific foods/i)
+    for (const food of ['Eggs', 'Avocado', 'Salmon', 'Bread']) {
+      expect(SYSTEM_GENERATE).toContain(food)
+    }
+  })
+
+  // The counterweight: pre-empting a well-known misconception about a food
+  // on the plate is fair; inventing an anxiety the person never had is not.
+  it('still forbids inventing a fear the person never expressed', () => {
+    expect(SYSTEM_GENERATE).toMatch(/not licence to invent/i)
+  })
+
+  it('requires them, so a plan cannot come back without any', () => {
+    expect(PLAN_SCHEMA.required).toContain('myths')
   })
 })

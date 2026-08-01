@@ -9,7 +9,7 @@ Total time: about 45 minutes, most of it waiting for DNS.
 
 ## Step 1b. Run the migrations (5 min — do this first)
 
-Two migrations to run in **SQL Editor → New query**, in order. Both are
+Five migrations to run in **SQL Editor → New query**, in order. All are
 idempotent, so running them twice is harmless.
 
 1. `0002_hardening.sql` — profile-creation trigger and sanity constraints.
@@ -23,7 +23,8 @@ idempotent, so running them twice is harmless.
    first-plan revision budget.
 5. `0006_saved_posts.sql` — bookmarks. Saves are private to the saver and
    cascade on post delete, so a saved list never shows a post that is gone.
-Confirm all four:
+
+Confirm all five:
 
 ```sql
 select tgname from pg_trigger where tgname = 'on_auth_user_created';
@@ -493,9 +494,21 @@ of static files — but the deploy needs one config file that Pages did not.
 
 ### 6.1 Commit `wrangler.jsonc` first
 
-`npx wrangler deploy` reads it to learn what to upload. Without it the deploy
-step fails with **"Missing entry-point"**, which is confusing because there
-genuinely is no Worker script — this is a static site.
+**This step is `git commit` and nothing else — do not run `wrangler` yet.**
+Cloudflare runs it for you in 6.6, after it has run the build. Running
+`npx wrangler deploy` by hand at this point fails with:
+
+> The directory specified by the "assets.directory" field in your
+> configuration file does not exist: …/fit-squad/dist
+
+which is correct and not a misconfiguration: `dist/` is build output, it is
+gitignored, and it does not exist until Vite writes it. If you do want to
+deploy from your laptop, `npm run deploy` builds first and then uploads —
+see 6.6b.
+
+Cloudflare's deploy step reads `wrangler.jsonc` to learn what to upload.
+Without it that step fails with **"Missing entry-point"**, which is confusing
+because there genuinely is no Worker script — this is a static site.
 
 It is already in the repo root:
 
@@ -594,11 +607,13 @@ That is not a misconfiguration. `dist/` is build output — it is in
 is nothing to upload until Vite has written it. Run both halves:
 
 ```bash
-npm run build && npx wrangler deploy
+npm run deploy
 ```
 
-The `&&` matters: if the build fails, you do not want the previous build's
-`dist/` shipped to production silently.
+which is exactly `npm run build && npx wrangler deploy`. Use the script rather
+than typing the two commands: the `&&` is what stops a failed build from
+silently shipping the *previous* build's `dist/` to production, and it is the
+easiest thing to leave out by hand.
 
 Pushing to `main` is still the normal path — Cloudflare builds and deploys on
 its own, and the deployed bundle then matches the commit. A hand deploy ships
@@ -690,7 +705,7 @@ supabase functions deploy resolve-link
 | Hard refresh on `/me` 404s | `not_found_handling` missing from `wrangler.jsonc` | Should be `"single-page-application"`. |
 | Plan shows as one long document with no tabs | It is a plan generated before the structured-output rewrite | Expected — the app now says so in a banner above it. Generate a fresh plan for the tabbed layout. |
 | "n changes left" on load, but clicking generate is refused with a cooldown, and the banner then flips to the cooldown and stays there | The **deployed** `generate-plan` predates the first-plan revision window. The client adopts the server's verdict — correctly, it is the authority — so the screen shows the refusal from then on | `supabase functions deploy generate-plan`, then **Check again** in the banner (or reload). Confirm the row first: `select id,status,is_first_plan,refinements_used,created_at from plans order by created_at desc limit 3;` — `is_first_plan = true` with `refinements_used < 3` means the row allows it and only the deploy was stale. |
-| `wrangler deploy`: *the directory specified by the "assets.directory" field … does not exist* | `npm run build` was not run — `dist/` is gitignored build output | `npm run build && npx wrangler deploy`. See §6.6b. |
+| `wrangler deploy`: *the directory specified by the "assets.directory" field … does not exist* | `wrangler deploy` was run on its own. `dist/` is gitignored build output and does not exist until Vite writes it | `npm run deploy` — it builds first, then uploads. See §6.6b. |
 | Feed loads but names are blank | Migration 0002 not run | Run it; it backfills existing users. |
 | Photos upload but don't display | Bucket not public | `select id, public from storage.buckets where id = 'post-photos';` must be `true`. |
 | Deep links 404 | `_redirects` missing from build | Confirm `dist/_redirects` exists after `npm run build`. |

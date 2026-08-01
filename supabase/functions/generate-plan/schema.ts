@@ -17,14 +17,15 @@ export const PLAN_SCHEMA = {
   type: 'object',
   required: [
     'language', 'hero', 'nutrition_inputs', 'numbers_explainer', 'plate',
-    'week', 'weekly_targets', 'training', 'tracking', 'disclaimer',
+    'myths', 'week', 'weekly_targets', 'training', 'tracking', 'disclaimer',
   ],
   properties: {
     language: {
       type: 'string',
       description:
-        'BCP-47 code of the language the plan text is written in, matching the ' +
-        'language of the user\'s own free-text answers. e.g. "es", "en".',
+        'Always "en". The plan is written in English regardless of what ' +
+        'language the user answered in. The field is kept because plans ' +
+        'generated before this rule are stored with other values.',
     },
 
     hero: {
@@ -32,7 +33,7 @@ export const PLAN_SCHEMA = {
       required: ['name', 'goal_label', 'headline'],
       properties: {
         name: { type: 'string', description: 'The person\'s name, or a friendly stand-in.' },
-        goal_label: { type: 'string', description: 'Their goal in a few words, in their language.' },
+        goal_label: { type: 'string', description: 'Their goal in a few words, in English.' },
         target_event: {
           type: 'string',
           description: 'Their target event and timeframe, if they gave one. Omit otherwise.',
@@ -105,14 +106,31 @@ export const PLAN_SCHEMA = {
     myths: {
       type: 'array',
       description:
-        'Only myths actually relevant to this user, based on what they wrote. ' +
-        'Empty array if none apply. Never invent a concern they did not raise.',
+        'Three to five quick corrections about SPECIFIC FOODS that appear in ' +
+        'this plan or in the user\'s answers — the ordinary misconceptions ' +
+        'attached to the things you are asking them to eat. Prioritise the ' +
+        'foods they said they love, because those are the ones they have been ' +
+        'feeling guilty about.',
+      minItems: 3,
+      maxItems: 5,
       items: {
         type: 'object',
         required: ['title', 'correction'],
         properties: {
-          title: { type: 'string' },
-          correction: { type: 'string' },
+          title: {
+            type: 'string',
+            description:
+              'The food itself, one or two words: "Eggs", "Avocado", ' +
+              '"Salmon", "Bread", "Rice", "Potatoes", "Red meat", ' +
+              '"Late-night carbs". Not a sentence.',
+          },
+          correction: {
+            type: 'string',
+            description:
+              'Two or three sentences: what people believe, what the evidence ' +
+              'shows, and what it means for this plan. Calm and concrete — ' +
+              'never scold the reader for having believed it.',
+          },
         },
       },
     },
@@ -146,7 +164,7 @@ export const PLAN_SCHEMA = {
         type: 'object',
         required: ['day', 'breakfast', 'lunch', 'dinner'],
         properties: {
-          day: { type: 'string', description: 'Day name in the plan\'s language.' },
+          day: { type: 'string', description: 'English day name: Monday, Tuesday, ... Sunday.' },
           label: { type: 'string', description: 'e.g. "training day", "match day", "night out".' },
           tags: {
             type: 'array',
@@ -278,6 +296,15 @@ export function validatePlan(plan: unknown): string[] {
   const split = p.training?.split
   if (!Array.isArray(split) || split.length < 3) {
     errors.push('training.split must have at least 3 days.')
+  }
+
+  // Myths are the part people quote back at each other, and the schema asks
+  // for three. Checking it here too means a model that returns one gets
+  // retried rather than quietly producing a thinner plan than the last one.
+  if (!Array.isArray(p.myths) || p.myths.length < 3) {
+    errors.push(`myths must have at least 3 entries, got ${Array.isArray(p.myths) ? p.myths.length : 'none'}.`)
+  } else if (p.myths.some((m: any) => !m?.title || !m?.correction)) {
+    errors.push('every myth needs a title and a correction.')
   }
 
   if (!p.disclaimer) errors.push('Missing disclaimer.')

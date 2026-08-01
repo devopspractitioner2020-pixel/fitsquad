@@ -198,6 +198,48 @@ describe('the daily numbers', () => {
   })
 })
 
+describe('the macro breakdown', () => {
+  const n = PLAN.numbers
+
+  // The old layout was three small tiles in a row: a number, a unit, nothing
+  // else. It never said what any macro was for, and it left the calorie
+  // target above looking like a fourth, separate rule.
+  it('gives each macro a full row with its calories, share and purpose', () => {
+    render(<PlanDocument plan={PLAN} />)
+
+    for (const label of ['Protein', 'Carbohydrates', 'Fat']) {
+      expect(screen.getByText(label)).toBeInTheDocument()
+    }
+    expect(screen.getByText(`${n.protein_g * 4} kcal · ${Math.round((n.protein_g * 4 / (n.protein_g * 4 + n.carbs_g * 4 + n.fat_g * 9)) * 100)}% of your calories · 4 kcal per gram`, { exact: false }))
+      .toBeInTheDocument()
+    expect(screen.getByText(/repair material/i)).toBeInTheDocument()
+    expect(screen.getByText(/training fuel/i)).toBeInTheDocument()
+    expect(screen.getByText(/hormone production/i)).toBeInTheDocument()
+  })
+
+  // The point the tiles could not make, and the one the reader asked for.
+  it('says outright that the three macros ARE the calories', () => {
+    render(<PlanDocument plan={PLAN} />)
+    expect(screen.getByText(/it all turns into calories/i)).toBeInTheDocument()
+    expect(screen.getByText(/4 kcal per gram; fat carries 9/i)).toBeInTheDocument()
+    expect(screen.getByText(/alcohol, at 7 kcal per gram/i)).toBeInTheDocument()
+  })
+
+  it('shows a total that agrees with the calorie target above it', () => {
+    render(<PlanDocument plan={PLAN} />)
+    const total = n.protein_g * 4 + n.carbs_g * 4 + n.fat_g * 9
+    expect(screen.getByText(`${total} kcal`)).toBeInTheDocument()
+    expect(Math.abs(total - n.target_kcal)).toBeLessThanOrEqual(10)
+  })
+
+  it('renders no macro rows at all rather than NaN when the grams are missing', () => {
+    render(<PlanDocument plan={{ ...PLAN, numbers: { ...n, protein_g: undefined } }} />)
+    expect(screen.queryByText(/it all turns into calories/i)).toBeNull()
+    // The calorie target above is unaffected.
+    expect(screen.getByText(String(n.target_kcal))).toBeInTheDocument()
+  })
+})
+
 // Day names repeat between the meal week and the training split, which is
 // exactly what a real plan looks like — so queries are scoped to a section.
 const section = (heading) =>
@@ -247,6 +289,21 @@ describe('the week', () => {
     render(<PlanDocument plan={PLAN} />)
     await openTab('Food')
     expect(screen.getByText(/pescado azul dos veces/)).toBeInTheDocument()
+  })
+})
+
+describe('legibility', () => {
+  // BREAKFAST / LUNCH / DINNER were text-muted-2 (#5A6E68) on the panel:
+  // roughly 2.6:1, under the 4.5:1 floor for text this small, and they read
+  // as disabled rather than as labels. This pins the fix, because contrast
+  // is invisible to every other test in this file.
+  it('does not render the meal labels in the tertiary grey', async () => {
+    render(<PlanDocument plan={PLAN} />)
+    await openTab('Food')
+
+    const label = within(section('Your week of food')).getAllByText('Breakfast')[0]
+    expect(label.className).not.toMatch(/text-muted-2/)
+    expect(label.className).toMatch(/text-mint/)
   })
 })
 

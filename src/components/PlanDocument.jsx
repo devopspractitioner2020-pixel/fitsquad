@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react'
+import { macroBreakdown, KCAL_PER_G, KCAL_PER_G_ALCOHOL } from '../lib/macros'
 
 // Renders a structured FitPlan using the app's own design system.
 //
@@ -186,11 +187,7 @@ function DailyNumbers({ numbers, explainer }) {
         </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-3">
-        <Macro label="Protein" grams={numbers.protein_g} perKg={numbers.protein_g_per_kg} />
-        <Macro label="Carbs" grams={numbers.carbs_g} />
-        <Macro label="Fat" grams={numbers.fat_g} perKg={numbers.fat_g_per_kg} />
-      </div>
+      <Macros numbers={numbers} />
 
       {explainer && <p className="text-muted mt-4 leading-relaxed">{explainer}</p>}
 
@@ -210,12 +207,71 @@ function DailyNumbers({ numbers, explainer }) {
   )
 }
 
-function Macro({ label, grams, perKg }) {
+// Three full-width rows rather than three small tiles side by side.
+//
+// The tiles fitted a number and a unit and nothing else, which meant the plan
+// stated three gram figures and never once said what any of them were for, or
+// how they related to the calorie target directly above them. Reading it, the
+// macros looked like three extra rules on top of the calories rather than
+// what they are: the calories, itemised.
+const MACRO_BAR = {
+  protein: '#7CC5FF',
+  carbs: '#FFD479',
+  fat: '#2FE6A8',
+}
+
+function Macros({ numbers }) {
+  const breakdown = macroBreakdown(numbers)
+  if (!breakdown) return null
+
   return (
-    <div className="bg-panel/60 border border-line rounded-2xl p-4 text-center">
-      <div className="text-muted text-[12px] uppercase tracking-wide mb-1">{label}</div>
-      <div className="font-display text-[26px] font-800 text-mint leading-none">{grams}<span className="text-[14px] text-muted ml-0.5">g</span></div>
-      {perKg != null && <div className="text-muted-2 text-[11px] mt-1">{perKg} g/kg</div>}
+    <div className="space-y-3">
+      {breakdown.macros.map((m) => (
+        <div key={m.key} className="bg-panel/60 border border-line rounded-2xl p-4">
+          <div className="flex items-baseline gap-2">
+            <span className="text-muted uppercase tracking-wide text-[12px] flex-1">{m.label}</span>
+            <span className="font-display text-[30px] font-800 leading-none" style={{ color: MACRO_BAR[m.key] }}>
+              {m.grams}
+            </span>
+            <span className="text-muted text-sm">g</span>
+          </div>
+
+          {/* The share of the day's energy, as a bar and as a number. This is
+              the part that makes the three rows add up to the target above
+              instead of floating next to it. */}
+          <div className="h-1.5 rounded-full bg-white/[0.06] mt-3 overflow-hidden">
+            <div
+              className="h-full rounded-full"
+              style={{ width: `${m.share}%`, background: MACRO_BAR[m.key] }}
+            />
+          </div>
+          <p className="text-muted-2 text-[12px] mt-2">
+            {m.kcal} kcal · {m.share}% of your calories · {m.kcalPerG} kcal per gram
+            {m.perKg != null && ` · ${m.perKg} g/kg`}
+          </p>
+
+          <p className="text-muted text-[13px] mt-2 leading-relaxed">
+            <span className="text-cream">{m.what}</span> {m.why}
+          </p>
+        </div>
+      ))}
+
+      {/* The point the tiles could never make. */}
+      <div className="bg-mint/[0.06] border border-mint/30 rounded-2xl p-4">
+        <div className="font-display font-700 text-mint mb-1">It all turns into calories</div>
+        <p className="text-muted text-[13px] leading-relaxed">
+          Protein and carbohydrate carry {KCAL_PER_G.protein} kcal per gram; fat carries{' '}
+          {KCAL_PER_G.fat}, more than twice as much. Add the three rows above and you get{' '}
+          <span className="text-cream">{breakdown.totalKcal} kcal</span> — your daily
+          target, itemised. Nothing else contributes energy except alcohol, at{' '}
+          {KCAL_PER_G_ALCOHOL} kcal per gram.
+        </p>
+        <p className="text-muted-2 text-[12px] mt-2 leading-relaxed">
+          So the total decides which direction your weight moves, and the split decides
+          what you lose on the way — enough protein and hard training is the difference
+          between losing fat and losing muscle.
+        </p>
+      </div>
     </div>
   )
 }
@@ -332,9 +388,13 @@ function Week({ week, targets }) {
   )
 }
 
+// The meal label was text-muted-2 (#5A6E68) on the panel — about 2.6:1, below
+// the 4.5:1 minimum for text this size, and it read as disabled rather than
+// as a label. Mint on the same background is ~9:1 and doubles as the cue that
+// these four rows are a set.
 const Meal = ({ label, text }) => (
   <p className="text-sm leading-relaxed mb-1">
-    <span className="text-muted-2 uppercase tracking-wide text-[11px] mr-2">{label}</span>
+    <span className="text-mint/80 uppercase tracking-wide text-[11px] font-700 mr-2">{label}</span>
     <span className="text-cream">{text}</span>
   </p>
 )

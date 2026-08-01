@@ -308,6 +308,11 @@ const VALID_PLAN = {
     activity_multiplier: 1.55, goal: 'lose-fat', goal_adjustment_kcal: -400,
   },
   numbers_explainer: 'Eat roughly this much.',
+  myths: [
+    { title: 'Eggs', correction: 'The dietary cholesterol scare did not hold up.' },
+    { title: 'Bread', correction: 'Portion size decides the outcome, not the bread.' },
+    { title: 'Avocado', correction: 'Energy-dense, not fattening. Portion it, keep it.' },
+  ],
   plate: { veg_examples: ['a'], protein_examples: ['b'], carb_examples: ['c'], hand_cues: ['d'] },
   week: Array.from({ length: 7 }, (_, i) => ({
     day: `Day ${i + 1}`, breakfast: 'eggs', lunch: 'rice', dinner: 'fish',
@@ -396,6 +401,23 @@ describe('validatePlan', () => {
   it('catches a nonsensical weight', () => {
     const nutrition_inputs = { ...VALID_PLAN.nutrition_inputs, weight_kg: 0 }
     expect(validatePlan({ ...VALID_PLAN, nutrition_inputs }).join(' ')).toMatch(/weight_kg/)
+  })
+
+  // Myths are the part people quote back at each other, and the schema asks
+  // for three. Without this check a model that returned one would produce a
+  // visibly thinner plan than the last one, with nothing failing.
+  it('catches a plan with too few myths', () => {
+    expect(validatePlan({ ...VALID_PLAN, myths: VALID_PLAN.myths.slice(0, 1) }).join(' '))
+      .toMatch(/at least 3 entries, got 1/)
+    expect(validatePlan({ ...VALID_PLAN, myths: undefined }).join(' '))
+      .toMatch(/at least 3 entries, got none/)
+  })
+
+  it('catches a myth missing its correction', () => {
+    const myths = [...VALID_PLAN.myths]
+    myths[1] = { title: 'Bread' }
+    expect(validatePlan({ ...VALID_PLAN, myths }).join(' '))
+      .toMatch(/title and a correction/)
   })
 
   it('rejects a non-object', () => {
