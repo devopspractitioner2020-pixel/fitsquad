@@ -1,0 +1,43 @@
+{
+  // Cloudflare Workers config for deploying the built frontend.
+  //
+  // This is a PURE STATIC deploy — there is no Worker script. Cloudflare's
+  // Workers Builds flow runs `npm run build` and then `npx wrangler deploy`,
+  // and `wrangler deploy` needs this file to know what to upload. Without it
+  // the deploy step fails with "Missing entry-point".
+  //
+  // The app's backend is Supabase, not a Worker: auth, the database and the
+  // generate-plan Edge Function all live there. Nothing server-side belongs
+  // in here, and no secret should ever be added to this file — it is
+  // committed to the repo.
+  "name": "fitsquad",
+  "compatibility_date": "2026-08-01",
+
+  "assets": {
+    // Vite's build output.
+    "directory": "./dist/",
+
+    // The app is a single-page app with client-side routing. Without this a
+    // hard refresh on /me or /saved/tips returns a 404, because no file
+    // exists at that path — Workers serves index.html instead and React
+    // Router takes it from there.
+    //
+    // This supersedes public/_redirects, which is kept only in case the
+    // project is ever moved back to Cloudflare Pages.
+    "not_found_handling": "single-page-application"
+  }
+
+  // NOTE ON ENVIRONMENT VARIABLES — the thing most likely to catch you out.
+  //
+  // VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY are read by Vite at BUILD
+  // time and baked into the bundle. They are NOT runtime Worker variables,
+  // so they must NOT be set here or in the dashboard's "Variables and
+  // Secrets" section — a Worker variable is invisible to a build that has
+  // already finished.
+  //
+  // Set them in the dashboard under:
+  //     Settings → Build → Build Variables and Secrets
+  //
+  // If the deployed site loads but cannot reach Supabase, this is almost
+  // always why: the build inlined `undefined` for both.
+}

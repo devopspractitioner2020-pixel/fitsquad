@@ -1,0 +1,23 @@
+# Supabase CLI project config.
+# `supabase link --project-ref ...` fills in project_id for you; the sections
+# below are the settings this project actually depends on.
+
+project_id = "fit-squad"
+
+[functions.generate-plan]
+# The browser calls this with the user's JWT and the function re-checks the
+# user itself, so JWT verification stays on.
+verify_jwt = true
+
+[functions.resolve-link]
+# Follows a TikTok short link to its canonical URL. Holds no secrets, but
+# stays behind JWT verification so it can't be used as a free redirect
+# resolver by anyone who finds the endpoint.
+verify_jwt = true
+
+[edge_runtime]
+# generate-plan finishes its Claude call in a background task via
+# EdgeRuntime.waitUntil(). Without per_worker the local runtime tears the
+# worker down as soon as the response is sent and the background task never
+# completes, so plans would stay stuck in 'generating' when testing locally.
+policy = "per_worker"

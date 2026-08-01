@@ -14,11 +14,14 @@ create table if not exists public.profiles (
 alter table public.profiles enable row level security;
 
 -- Anyone signed in can read profiles (needed for the leaderboard / feed names).
+drop policy if exists "profiles readable by authenticated" on public.profiles;
 create policy "profiles readable by authenticated"
   on public.profiles for select to authenticated using (true);
 -- You may only insert/update your own profile row.
+drop policy if exists "insert own profile" on public.profiles;
 create policy "insert own profile"
   on public.profiles for insert to authenticated with check (auth.uid() = id);
+drop policy if exists "update own profile" on public.profiles;
 create policy "update own profile"
   on public.profiles for update to authenticated using (auth.uid() = id);
 
@@ -40,11 +43,14 @@ create table if not exists public.posts (
 alter table public.posts enable row level security;
 
 -- Squad feed: all signed-in members can read all posts.
+drop policy if exists "posts readable by authenticated" on public.posts;
 create policy "posts readable by authenticated"
   on public.posts for select to authenticated using (true);
 -- You can only create/delete your own posts.
+drop policy if exists "insert own posts" on public.posts;
 create policy "insert own posts"
   on public.posts for insert to authenticated with check (auth.uid() = user_id);
+drop policy if exists "delete own posts" on public.posts;
 create policy "delete own posts"
   on public.posts for delete to authenticated using (auth.uid() = user_id);
 
@@ -61,8 +67,10 @@ alter table public.weigh_ins enable row level security;
 -- Weigh-ins are readable by the squad (leaderboard shows total change),
 -- but only editable by their owner. Tighten the SELECT to own-only if you
 -- prefer weights private: change `using (true)` to `using (auth.uid() = user_id)`.
+drop policy if exists "weighins readable by authenticated" on public.weigh_ins;
 create policy "weighins readable by authenticated"
   on public.weigh_ins for select to authenticated using (true);
+drop policy if exists "insert own weighins" on public.weigh_ins;
 create policy "insert own weighins"
   on public.weigh_ins for insert to authenticated with check (auth.uid() = user_id);
 
@@ -73,6 +81,7 @@ create table if not exists public.intakes (
   updated_at timestamptz not null default now()
 );
 alter table public.intakes enable row level security;
+drop policy if exists "own intake all" on public.intakes;
 create policy "own intake all"
   on public.intakes for all to authenticated
   using (auth.uid() = user_id) with check (auth.uid() = user_id);
@@ -94,6 +103,7 @@ alter table public.plans enable row level security;
 -- Only the owner can read their plans. The Edge Function writes with the
 -- service-role key, which bypasses RLS, so no INSERT/UPDATE policy is needed
 -- for the server. Users never write plan rows directly from the client.
+drop policy if exists "read own plans" on public.plans;
 create policy "read own plans"
   on public.plans for select to authenticated using (auth.uid() = user_id);
 
@@ -108,11 +118,13 @@ on conflict (id) do nothing;
 
 -- Public read (photos show in the feed). Path is namespaced by user id:
 --   post-photos/<user_id>/<uuid>.jpg
+drop policy if exists "photos public read" on storage.objects;
 create policy "photos public read"
   on storage.objects for select to public
   using (bucket_id = 'post-photos');
 
 -- Users may upload only into their own <user_id>/ folder.
+drop policy if exists "photos insert own folder" on storage.objects;
 create policy "photos insert own folder"
   on storage.objects for insert to authenticated
   with check (
@@ -120,6 +132,7 @@ create policy "photos insert own folder"
     and (storage.foldername(name))[1] = auth.uid()::text
   );
 
+drop policy if exists "photos delete own folder" on storage.objects;
 create policy "photos delete own folder"
   on storage.objects for delete to authenticated
   using (

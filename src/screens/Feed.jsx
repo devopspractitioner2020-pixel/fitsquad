@@ -2,12 +2,13 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import { Header } from '../components/ui'
-
-const REACTIONS = ['🔥', '💪', '👏', '😅']
+import PostCard from '../components/PostCard'
+import { getSavedPostIds } from '../lib/saved'
 
 export default function Feed() {
-  const { profile, signOut } = useAuth()
+  const { user, profile, signOut } = useAuth()
   const [posts, setPosts] = useState([])
+  const [savedIds, setSavedIds] = useState(() => new Set())
   const [summary, setSummary] = useState({ meals: 0, workouts: 0, cheats: 0 })
 
   async function load() {
@@ -24,7 +25,29 @@ export default function Feed() {
     setSummary({ meals, workouts, cheats })
   }
 
+  // Which posts this reader has already saved, so the bookmark icons render
+  // filled on first paint rather than popping in a moment later.
+  async function loadSaved() {
+    if (!user?.id) return
+    try {
+      setSavedIds(await getSavedPostIds(user.id))
+    } catch {
+      // A failed read here should not stop the feed rendering; the icons
+      // simply show as unsaved and correct themselves on the next load.
+    }
+  }
+
   useEffect(() => { load() }, [])
+  useEffect(() => { loadSaved() }, [user?.id])
+
+  function onSavedChange(postId, next) {
+    setSavedIds((prev) => {
+      const copy = new Set(prev)
+      if (next) copy.add(postId)
+      else copy.delete(postId)
+      return copy
+    })
+  }
 
   return (
     <div className="app-shell">
@@ -53,7 +76,15 @@ export default function Feed() {
               <p>Tap + to log your first workout or meal.</p>
             </div>
           )}
-          {posts.map((p) => <PostCard key={p.id} post={p} />)}
+          {posts.map((p) => (
+            <PostCard
+              key={p.id}
+              post={p}
+              userId={user?.id}
+              saved={savedIds.has(p.id)}
+              onSavedChange={onSavedChange}
+            />
+          ))}
         </div>
       </div>
     </div>
@@ -70,49 +101,4 @@ function SummaryRow({ icon, label, value }) {
       </div>
     </div>
   )
-}
-
-function PostCard({ post }) {
-  const when = timeAgo(post.created_at)
-  const kindLabel = post.kind === 'workout' ? 'Strength' : post.kind === 'meal' ? 'Healthy Meal' : 'Tip'
-  const kindIcon = post.kind === 'meal' ? '🍽️' : post.kind === 'tip' ? '✨' : '🏋️'
-  return (
-    <div className="bg-card border border-line rounded-xl2 p-5">
-      <div className="flex items-center gap-3 mb-3">
-        <div className="w-11 h-11 rounded-full bg-mint/15 grid place-items-center text-mint font-display font-700">
-          {(post.author_name ?? '?')[0]?.toUpperCase()}
-        </div>
-        <div>
-          <div className="font-display font-700">{post.author_name} <span className="text-muted font-body font-400">· {when}</span></div>
-          <div className="text-muted text-sm">{kindIcon} {kindLabel}</div>
-        </div>
-      </div>
-
-      <div className="flex items-center gap-2 flex-wrap mb-1">
-        <h4 className="font-display text-[26px] font-700">{post.title}</h4>
-        {post.is_healthy && <span className="text-mint bg-mint/12 rounded-full px-3 py-0.5 text-sm font-700">healthy</span>}
-        {post.is_cheat && <span className="text-[#ff8bd0] bg-[#ff8bd0]/12 rounded-full px-3 py-0.5 text-sm font-700">cheat 😈</span>}
-      </div>
-      {post.minutes && <p className="text-muted mb-2">{post.minutes} min · Strength</p>}
-      {post.note && <p className="text-muted mb-2">{post.note}</p>}
-
-      {post.photo_url && (
-        <img src={post.photo_url} alt={post.title} className="w-full max-h-72 object-cover rounded-2xl border border-line my-3" />
-      )}
-
-      <div className="flex items-center gap-2 mt-3">
-        {REACTIONS.map((r) => (
-          <button key={r} className="w-11 h-9 rounded-full border border-line grid place-items-center text-[16px] active:bg-card-2">{r}</button>
-        ))}
-        <button className="ml-auto text-muted">Comment</button>
-      </div>
-    </div>
-  )
-}
-
-function timeAgo(iso) {
-  const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000)
-  if (s < 3600) return `${Math.max(1, Math.floor(s / 60))} min ago`
-  if (s < 86400) return `about ${Math.floor(s / 3600)} hours ago`
-  return `${Math.floor(s / 86400)} day${s < 172800 ? '' : 's'} ago`
 }

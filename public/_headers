@@ -1,0 +1,23 @@
+# Cloudflare Pages security headers.
+# Pages serves this file verbatim from the build output; it is not shipped
+# to the browser as a file, it configures the response headers.
+#
+# NOTE: replace the *.supabase.co wildcard in connect-src with your own
+# project URL for a tighter policy, e.g. https://abcdefgh.supabase.co
+#
+# frame-src lists the three video platforms the feed embeds. Without them the
+# embeds go blank with NO console error pointing at the cause — CSP frame
+# blocks are close to silent, which makes this the single most likely thing
+# to waste an afternoon if a provider is ever added.
+
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob: https://*.supabase.co; connect-src 'self' https://*.supabase.co wss://*.supabase.co; frame-src 'self' https://www.tiktok.com https://www.instagram.com https://www.youtube-nocookie.com; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  X-Frame-Options: DENY
+  Permissions-Policy: geolocation=(), microphone=(), payment=(), interest-cohort=()
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
+
+# Hashed asset filenames are immutable.
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable

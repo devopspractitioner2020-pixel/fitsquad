@@ -2,13 +2,14 @@ import { useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import { uploadPhoto } from '../lib/image'
+import { parseVideoUrl, explainVideoUrl } from '../lib/embeds'
 
 // Photo picker with instant local preview. Compression + upload happens on submit.
 function PhotoField({ file, setFile }) {
   const preview = file ? URL.createObjectURL(file) : null
   return (
     <div>
-      <label className="label">Photo (optional)</label>
+      <span className="label">Photo (optional)</span>
       {preview ? (
         <div className="relative">
           <img src={preview} alt="Selected" className="w-full h-44 object-cover rounded-2xl border border-line" />
@@ -49,6 +50,7 @@ export default function LogModal({ open, onClose, onLogged }) {
   const [title, setTitle] = useState('')
   const [note, setNote] = useState('')
   const [file, setFile] = useState(null)
+  const [videoUrl, setVideoUrl] = useState('')
   // type-specific
   const [minutes, setMinutes] = useState('')
   const [mealType, setMealType] = useState('Lunch')
@@ -60,7 +62,8 @@ export default function LogModal({ open, onClose, onLogged }) {
 
   function reset() {
     setType(null); setTitle(''); setNote(''); setFile(null); setMinutes('')
-    setMealType('Lunch'); setIsCheat(false); setWeight(''); setHealthy(true); setErr('')
+    setMealType('Lunch'); setIsCheat(false); setWeight(''); setHealthy(true)
+    setVideoUrl(''); setErr('')
   }
   function close() { reset(); onClose() }
 
@@ -69,6 +72,42 @@ export default function LogModal({ open, onClose, onLogged }) {
     try {
       let photo_url = null
       if (file) photo_url = await uploadPhoto(supabase, user.id, file)
+
+      // Short links hide the real video ID behind a redirect. Resolve once,
+      // here at save time, so the feed always has an embeddable URL and no
+      // reader ever pays for the round trip.
+      let video_url = videoUrl.trim() || null
+      if (video_url) {
+        const parsed = parseVideoUrl(video_url)
+        if (!parsed) {
+          // The field above already explains exactly what is wrong with the
+          // link, so this says what to DO rather than repeating it. Two
+          // copies of the same sentence in one sheet is just noise — and
+          // two DIFFERENT wordings of it, which is what this used to do, is
+          // worse.
+          throw new Error('Fix the video link above, or clear it to post without a video.')
+        }
+        // Normalised: strips any caption text the share sheet included and
+        // drops tracking params, so what we store is the canonical link.
+        video_url = parsed.url
+
+        if (parsed.needsResolve) {
+          // Short links are what the TikTok app actually gives people, so
+          // this path is the common case, not the edge case.
+          //
+          // If expansion fails we save the short link ANYWAY rather than
+          // rejecting the post. TikTok's edge sometimes refuses datacenter
+          // IPs, and losing a tip somebody just typed because of that would
+          // be a far worse outcome than a card in the feed that opens the
+          // video in TikTok instead of playing inline.
+          try {
+            const { data } = await supabase.functions.invoke('resolve-link', { body: { url: video_url } })
+            if (data?.url) video_url = data.url
+          } catch {
+            // Deliberately swallowed — see above.
+          }
+        }
+      }
 
       if (type === 'weigh') {
         const w = parseFloat(String(weight).replace(',', '.'))
@@ -89,6 +128,7 @@ export default function LogModal({ open, onClose, onLogged }) {
           is_cheat: type === 'meal' ? isCheat : null,
           is_healthy: type === 'meal' ? healthy && !isCheat : null,
           photo_url,
+          video_url,
         })
         if (error) throw error
       }
@@ -140,12 +180,12 @@ export default function LogModal({ open, onClose, onLogged }) {
             {type === 'meal' && (
               <div className="space-y-4">
                 <Field label="What did you eat?" value={title} setValue={setTitle} placeholder="Grilled chicken salad" />
-                <div>
-                  <label className="label">Meal</label>
+                <label className="block">
+                  <span className="label">Meal</span>
                   <select className="input" value={mealType} onChange={(e) => setMealType(e.target.value)}>
                     <option>Breakfast</option><option>Lunch</option><option>Dinner</option><option>Snack</option>
                   </select>
-                </div>
+                </label>
                 <Toggle label="Was it a sin? 😈" hint="Own the cheat meal." value={isCheat} setValue={setIsCheat} />
                 <PhotoField file={file} setFile={setFile} />
                 <Field label="Note (optional)" value={note} setValue={setNote} placeholder="Extra details…" textarea />
@@ -162,6 +202,7 @@ export default function LogModal({ open, onClose, onLogged }) {
             {type === 'tip' && (
               <div className="space-y-4">
                 <Field label="Share a tip, recipe, or idea" value={title} setValue={setTitle} placeholder="Try this protein pancake recipe…" textarea />
+                <LinkField url={videoUrl} setUrl={setVideoUrl} />
                 <PhotoField file={file} setFile={setFile} />
               </div>
             )}
@@ -181,14 +222,53 @@ export default function LogModal({ open, onClose, onLogged }) {
   )
 }
 
+// Paste a TikTok / Reel / Short link. Validated as they type, so they get
+// instant feedback here rather than a dead card in the feed later.
+//
+// The feedback names the ACTUAL problem. A profile link is the most common
+// paste by far — TikTok's "Share profile" hands you `tiktok.com/@user?…`,
+// which is close enough to a video link that a generic "not recognised"
+// reads like the app is broken rather than like the wrong link was copied.
+function LinkField({ url, setUrl }) {
+  const verdict = explainVideoUrl(url)
+  const show = url.trim() && verdict.reason !== 'empty'
+  return (
+    <label className="block">
+      <span className="label">Video link (optional)</span>
+      <input
+        className="input"
+        value={url}
+        onChange={(e) => setUrl(e.target.value)}
+        placeholder="Paste a TikTok, Reel or YouTube Short link"
+        inputMode="url"
+        autoCapitalize="none"
+        autoCorrect="off"
+        spellCheck="false"
+        aria-invalid={show && !verdict.ok ? 'true' : undefined}
+      />
+      {show && (
+        <p className={`text-sm mt-2 ${verdict.ok ? 'text-mint' : 'text-[#ffd479]'}`}>
+          {verdict.message}
+        </p>
+      )}
+      <p className="text-muted-2 text-[12px] mt-2">
+        The video streams from the original platform. Nothing is copied or stored here.
+      </p>
+    </label>
+  )
+}
+
+// The control is nested inside the <label>, which associates the two without
+// needing an id. Previously the label was a sibling, so screen readers
+// announced every field as an unlabelled text box.
 function Field({ label, value, setValue, placeholder, type = 'text', textarea }) {
   return (
-    <div>
-      <label className="label">{label}</label>
+    <label className="block">
+      <span className="label">{label}</span>
       {textarea
         ? <textarea className="input min-h-[96px] resize-none" value={value} placeholder={placeholder} onChange={(e) => setValue(e.target.value)} />
         : <input className="input" type={type} inputMode={type === 'number' ? 'decimal' : undefined} value={value} placeholder={placeholder} onChange={(e) => setValue(e.target.value)} />}
-    </div>
+    </label>
   )
 }
 

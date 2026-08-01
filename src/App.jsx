@@ -7,6 +7,7 @@ import Me from './screens/Me'
 import Squad from './screens/Squad'
 import Intake from './screens/Intake'
 import PlanView from './screens/PlanView'
+import Saved from './screens/Saved'
 import BottomNav from './components/BottomNav'
 import LogModal from './components/LogModal'
 
@@ -30,6 +31,7 @@ export default function App() {
         <Route path="/squad" element={<Squad />} />
         <Route path="/intake" element={<Intake />} />
         <Route path="/plan" element={<PlanView />} />
+        <Route path="/saved/:kind" element={<Saved />} />
         <Route path="*" element={<Navigate to="/feed" replace />} />
       </Routes>
 

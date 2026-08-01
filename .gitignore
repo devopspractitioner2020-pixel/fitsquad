@@ -3,3 +3,6 @@ dist
 .env
 .env.local
 .DS_Store
+.wrangler
+supabase/.temp
+supabase/.branches

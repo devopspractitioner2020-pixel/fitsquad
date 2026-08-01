@@ -21,6 +21,17 @@ export default {
         display: ['Sora', 'system-ui', 'sans-serif'],
         body: ['Inter', 'system-ui', 'sans-serif'],
       },
+      // The screens are written with numeric weights (font-700, font-800).
+      // Tailwind's default scale is named (font-bold, font-extrabold), so
+      // without these aliases every one of those 37 class usages silently
+      // compiled to nothing and headings rendered at weight 400.
+      fontWeight: {
+        400: '400',
+        500: '500',
+        600: '600',
+        700: '700',
+        800: '800',
+      },
       borderRadius: {
         xl2: '20px',
         xl3: '26px',

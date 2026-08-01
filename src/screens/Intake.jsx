@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
-import { generatePlan, getLatestPlan, daysUntilRegen } from '../lib/api'
+import {
+  generatePlan, getLatestPlan, pluralDays,
+  saveIntakeDraft, getIntakeDraft, planGate,
+} from '../lib/api'
 import { Header } from '../components/ui'
 
 const BLANK = {
@@ -20,38 +22,94 @@ export default function Intake() {
   const [f, setF] = useState({ ...BLANK, name: profile?.display_name ?? '' })
   const [ack, setAck] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
   const [err, setErr] = useState('')
-  const [cooldown, setCooldown] = useState(0)
+  // ONE piece of state for "may I generate, and why not". Holding the
+  // allowance and the cooldown separately let them contradict each other on
+  // screen — "3 changes left, no waiting" directly above "wait 3 days".
+  const [gate, setGate] = useState({ kind: 'open' })
 
-  // Recycle the previous intake so regeneration only needs the new weight.
+  // Load the form. Two sources, newest-wins:
+  //   1. `plans.intake` — the snapshot the last plan was built from.
+  //   2. `intakes`      — a draft saved with the Save button.
+  //
+  // The draft is applied second and therefore wins. It has to: it is the
+  // more recent expression of what the user wants, and reading it is the
+  // whole reason Save exists. Before this, `intakes` was written on every
+  // save and read by nothing, so saving looked like it wiped the form.
   useEffect(() => {
     (async () => {
-      if (!user) return
-      const last = await getLatestPlan(user.id)
-      if (last) {
-        setCooldown(daysUntilRegen(last))
-        if (last.intake) setF((prev) => ({ ...prev, ...last.intake }))
+      if (!user?.id) return
+      try {
+        const [last, draft] = await Promise.all([
+          getLatestPlan(user.id),
+          getIntakeDraft(user.id),
+        ])
+        if (last) {
+          setGate(planGate(last))
+          if (last.intake) setF((prev) => ({ ...prev, ...last.intake }))
+        }
+        if (draft) setF((prev) => ({ ...prev, ...draft }))
+      } catch (e) {
+        setErr(e?.message || 'Could not load your saved answers.')
       }
     })()
-  }, [user])
+  }, [user?.id])
 
-  const set = (k) => (e) => setF({ ...f, [k]: e.target.value })
+  // Any edit invalidates the "Saved" confirmation.
+  useEffect(() => { setSaved(false) }, [f])
+
+  // Functional update: `set` is captured by every field's onChange, and the
+  // object-spread form dropped keystrokes when two fields changed in the
+  // same tick (e.g. autofill).
+  const set = (k) => (e) => {
+    const { value } = e.target
+    setF((prev) => ({ ...prev, [k]: value }))
+  }
 
   async function saveIntake() {
-    await supabase.from('intakes').upsert({ user_id: user.id, data: f })
+    await saveIntakeDraft(user.id, f)
+  }
+
+  // Save on its own. Deliberately does NOT navigate away: the old version
+  // bounced to /me the moment it finished, so the only feedback the user got
+  // was their form disappearing.
+  async function saveOnly() {
+    setErr(''); setSaving(true)
+    try {
+      await saveIntake()
+      setSaved(true)
+    } catch (e) {
+      // The old handler had no catch at all, so a failed write did nothing
+      // visible whatsoever.
+      setErr(e?.message || 'Could not save your answers. Try again.')
+    } finally {
+      setSaving(false)
+    }
   }
 
   async function generate() {
     setErr('')
     if (!ack) { setErr('Please tick the box to confirm you understand this is not medical advice.'); return }
-    if (cooldown > 0) { setErr(`You can regenerate in ${cooldown} day${cooldown > 1 ? 's' : ''}.`); return }
+    if (gate.kind === 'cooldown') {
+      setErr(`You can regenerate in ${pluralDays(gate.daysLeft)}.`)
+      return
+    }
     setBusy(true)
     try {
       await saveIntake()
-      await generatePlan(f) // Edge Function inserts a 'generating' plan row
-      nav('/me') // Me screen shows the spinner and polls until ready
+      // Returns as soon as the 'generating' row exists; Claude runs in the
+      // background and the Me screen polls until the row flips.
+      await generatePlan(f)
+      nav('/me')
     } catch (e) {
-      setErr(e.message ?? 'Could not start generation. Try again.')
+      setErr(e?.message || 'Could not start generation. Try again.')
+      // The server is the real rate limiter and its verdict REPLACES ours.
+      // Setting a cooldown while leaving an "n changes left, no waiting"
+      // banner on screen is how the two ended up contradicting each other.
+      // Replacing the whole gate makes that impossible.
+      if (e?.daysLeft) setGate({ kind: 'cooldown', daysLeft: e.daysLeft })
       setBusy(false)
     }
   }
@@ -65,9 +123,22 @@ export default function Intake() {
         <h1 className="font-display text-[38px] font-800 mb-2">FitPlan intake</h1>
         <p className="text-muted mb-6">Tell us about your goals, schedule, food and constraints. All fields except goal are optional — the more you share, the better the plan.</p>
 
-        {cooldown > 0 && (
+        {/* Exactly one of these can ever render — they are branches of the
+            same value, not two independent flags. */}
+        {gate.kind === 'free' && (
+          <div className="bg-mint/[0.08] border border-mint/30 rounded-xl2 p-4 mb-5 text-muted">
+            {/* The whole count sits in one node so it reads as one phrase to
+                a screen reader, rather than "2" … "change" … "s left". */}
+            You have <b className="text-mint">{`${gate.revisionsLeft} change${gate.revisionsLeft === 1 ? '' : 's'} left`}</b> on
+            your first plan. Regenerating now uses one — no waiting.
+          </div>
+        )}
+
+        {gate.kind === 'cooldown' && (
           <div className="bg-card border border-line rounded-xl2 p-4 mb-5 text-muted">
-            Your last plan is recent. You can generate a fresh one in <b className="text-cream">{cooldown} day{cooldown > 1 ? 's' : ''}</b>. You can still edit and save your info now.
+            Your last plan is recent. You can generate a fresh one in <b className="text-cream">{pluralDays(gate.daysLeft)}</b>.
+            You can still edit and <b className="text-cream">save</b> your answers now — they will be
+            waiting when the next plan is due.
           </div>
         )}
 
@@ -135,12 +206,30 @@ export default function Intake() {
         </label>
 
         {err && <p className="text-[#ff9b8a] text-sm mb-3">{err}</p>}
+        {saved && (
+          <p className="text-mint text-sm mb-3" role="status">
+            Saved. Your answers will be here next time — and they are what the next plan is built from.
+          </p>
+        )}
 
-        <button className="btn-ghost mb-3" onClick={async () => { await saveIntake(); nav('/me') }}>Save intake</button>
-        <button className="btn-primary flex items-center justify-center gap-2" onClick={generate} disabled={busy || cooldown > 0}>
-          {busy ? <><span className="spinner" /> Starting…</> : 'Save & generate my FitPlan'}
+        <button
+          className="btn-ghost mb-3 flex items-center justify-center gap-2"
+          onClick={saveOnly}
+          disabled={saving}
+        >
+          {saving ? <><span className="spinner spinner-mint" /> Saving…</> : 'Save answers'}
         </button>
-        <p className="text-muted-2 text-sm text-center mt-3 mb-2">Generating takes ~30–60 seconds. You can leave this screen — track progress on Me → Your FitPlan.</p>
+
+        <button
+          className="btn-primary flex items-center justify-center gap-2"
+          onClick={generate}
+          disabled={busy || gate.kind === 'cooldown'}
+        >
+          {busy ? <><span className="spinner" /> Starting…</>
+            : gate.kind === 'cooldown' ? `New plan available in ${pluralDays(gate.daysLeft)}`
+            : 'Save & generate my FitPlan'}
+        </button>
+        <p className="text-muted-2 text-sm text-center mt-3 mb-2">Generating takes ~20–60 seconds. You can leave this screen — track progress on Me → Your FitPlan.</p>
       </div>
     </div>
   )
@@ -154,5 +243,9 @@ function Section({ n, title, children }) {
     </div>
   )
 }
-const F = ({ label, children }) => <div><label className="label">{label}</label>{children}</div>
+// Nesting the control inside the <label> associates the two without ids, so
+// each field is actually announced by its name to assistive tech.
+const F = ({ label, children }) => (
+  <label className="block"><span className="label">{label}</span>{children}</label>
+)
 const Row = ({ children }) => <div className="grid grid-cols-2 gap-3">{children}</div>

@@ -3,7 +3,8 @@ import { useNavigate } from 'react-router-dom'
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip } from 'recharts'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
-import { getLatestPlan } from '../lib/api'
+import { getLatestPlan, effectiveStatus } from '../lib/api'
+import { getSavedCounts, KIND_TO_SLUG } from '../lib/saved'
 import { Header } from '../components/ui'
 
 export default function Me() {
@@ -12,6 +13,7 @@ export default function Me() {
   const [plan, setPlan] = useState(null)
   const [weighIns, setWeighIns] = useState([])
   const [counts, setCounts] = useState({ meals: 0, workouts: 0 })
+  const [saved, setSaved] = useState({ tip: 0, meal: 0 })
   const pollRef = useRef(null)
 
   async function loadPlan() {
@@ -22,6 +24,7 @@ export default function Me() {
   }
 
   async function loadRest() {
+    if (!user?.id) return
     const { data: w } = await supabase
       .from('weigh_ins').select('weight_kg,created_at').eq('user_id', user.id).order('created_at')
     setWeighIns(w ?? [])
@@ -30,20 +33,29 @@ export default function Me() {
       meals: (posts ?? []).filter((p) => p.kind === 'meal').length,
       workouts: (posts ?? []).filter((p) => p.kind === 'workout').length,
     })
+
+    try {
+      setSaved(await getSavedCounts(user.id))
+    } catch {
+      // Counts are decoration; the boxes still open if this fails.
+    }
   }
 
-  useEffect(() => { loadPlan(); loadRest() }, [user])
+  useEffect(() => { loadPlan(); loadRest() }, [user?.id])
 
   // While a plan is generating, poll every 3s until it's ready or errored.
+  // A 'generating' row whose worker died reads as 'error' here, so the poll
+  // terminates instead of spinning forever.
+  const planStatus = effectiveStatus(plan)
+
   useEffect(() => {
-    if (plan?.status === 'generating') {
-      pollRef.current = setInterval(async () => {
-        const p = await loadPlan()
-        if (p && p.status !== 'generating') clearInterval(pollRef.current)
-      }, 3000)
-      return () => clearInterval(pollRef.current)
-    }
-  }, [plan?.status, plan?.id])
+    if (planStatus !== 'generating') return
+    pollRef.current = setInterval(async () => {
+      const p = await loadPlan()
+      if (effectiveStatus(p) !== 'generating') clearInterval(pollRef.current)
+    }, 3000)
+    return () => clearInterval(pollRef.current)
+  }, [planStatus, plan?.id])
 
   const first = weighIns[0]?.weight_kg
   const current = weighIns[weighIns.length - 1]?.weight_kg
@@ -62,7 +74,20 @@ export default function Me() {
         <h1 className="font-display text-[42px] font-800 mb-5">{profile?.display_name ?? 'You'}</h1>
 
         {/* FitPlan card — the state machine you asked to fix */}
-        <PlanCard plan={plan} onOpen={() => nav('/plan')} onCreate={() => nav('/intake')} />
+        <PlanCard status={planStatus} onOpen={() => nav('/plan')} onCreate={() => nav('/intake')} />
+
+        {/* A second, always-present route to the form. When a plan is ready
+            the card navigates to the plan itself, which previously left the
+            answers reachable only by generating a new plan — impossible
+            during the cooldown. */}
+        {(planStatus === 'ready' || planStatus === 'generating') && (
+          <button
+            onClick={() => nav('/intake')}
+            className="w-full text-muted text-sm mt-3 underline decoration-line underline-offset-4"
+          >
+            Update your plan answers
+          </button>
+        )}
 
         {/* Quick stats */}
         <div className="grid grid-cols-3 gap-3 my-6">
@@ -100,24 +125,30 @@ export default function Me() {
           )}
         </div>
 
-        {/* Badges */}
-        <div className="bg-card border border-line rounded-xl2 p-5">
-          <h3 className="font-display text-[22px] font-700 mb-4">Badges</h3>
-          <div className="grid grid-cols-4 gap-3">
-            <Badge emoji="🎉" label="First log" on={counts.meals + counts.workouts > 0} />
-            <Badge emoji="🏋️" label="10 workouts" on={counts.workouts >= 10} />
-            <Badge emoji="🥗" label="Clean week" on={counts.meals >= 5} />
-            <Badge emoji="📉" label="Lost 5" on={change != null && change <= -5} />
-          </div>
+        {/* Saved collection */}
+        <div className="grid grid-cols-2 gap-3">
+          <SavedBox
+            emoji="✨"
+            label="Saved tips"
+            count={saved.tip}
+            onOpen={() => nav(`/saved/${KIND_TO_SLUG.tip}`)}
+          />
+          <SavedBox
+            emoji="🍽️"
+            label="Saved meals"
+            count={saved.meal}
+            onOpen={() => nav(`/saved/${KIND_TO_SLUG.meal}`)}
+          />
         </div>
       </div>
     </div>
   )
 }
 
-function PlanCard({ plan, onOpen, onCreate }) {
+// `status` comes from effectiveStatus(): 'none' | 'generating' | 'ready' | 'error'.
+export function PlanCard({ status, onOpen, onCreate }) {
   // No plan yet → invite to create.
-  if (!plan) {
+  if (status === 'none') {
     return (
       <button onClick={onCreate} className="w-full flex items-center gap-4 bg-card border border-mint/40 rounded-xl2 p-5 text-left">
         <div className="w-14 h-14 rounded-full bg-mint grid place-items-center text-[24px]">✨</div>
@@ -131,7 +162,7 @@ function PlanCard({ plan, onOpen, onCreate }) {
   }
 
   // Generating → spinner + disabled feel, no navigation to a half-baked plan.
-  if (plan.status === 'generating') {
+  if (status === 'generating') {
     return (
       <div className="w-full flex items-center gap-4 bg-card border border-mint/40 rounded-xl2 p-5 pulsing">
         <div className="w-14 h-14 rounded-full bg-mint grid place-items-center">
@@ -146,7 +177,7 @@ function PlanCard({ plan, onOpen, onCreate }) {
   }
 
   // Errored → let them retry.
-  if (plan.status === 'error') {
+  if (status === 'error') {
     return (
       <button onClick={onCreate} className="w-full flex items-center gap-4 bg-card border border-[#ff8b6b]/40 rounded-xl2 p-5 text-left">
         <div className="w-14 h-14 rounded-full bg-[#ff8b6b]/20 grid place-items-center text-[24px]">⚠️</div>
@@ -181,12 +212,18 @@ function Stat({ label, value, unit }) {
   )
 }
 
-function Badge({ emoji, label, on }) {
+// A tap-through to one saved list. Shows the count so an empty collection is
+// obvious before tapping, rather than after.
+function SavedBox({ emoji, label, count, onOpen }) {
   return (
-    <div className={`rounded-2xl border p-3 text-center ${on ? 'border-line bg-panel/60' : 'border-line/50 opacity-40'}`}>
-      <div className="text-[26px] mb-1">{emoji}</div>
-      <div className="text-muted text-[13px] leading-tight">{label}</div>
-    </div>
+    <button
+      onClick={onOpen}
+      className="bg-card border border-line rounded-xl2 p-5 text-left active:bg-card-2"
+    >
+      <div className="text-[26px] mb-2">{emoji}</div>
+      <div className="font-display text-[30px] font-800 text-mint leading-none">{count}</div>
+      <div className="text-muted text-[13px] uppercase tracking-wide mt-1">{label}</div>
+    </button>
   )
 }
 
