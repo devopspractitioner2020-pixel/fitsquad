@@ -129,9 +129,12 @@ npm run dev
 5. Deploy. To use a subdomain of your domain (e.g. `fitsquad.inkaitech.com`), add a
    **Custom domain** in the Pages project (works once your domain's DNS is on Cloudflare).
 
-Because the frontend is a single-page app, add a `_redirects` file to `public/` with
-`/*  /index.html  200` if deep links 404 (Cloudflare Pages usually handles SPAs, but this
-guarantees it).
+Because the frontend is a single-page app, deep links like `/me` need a fallback to
+`index.html`. How you get it depends on the platform, and the two are mutually
+exclusive: on **Workers** it is `"not_found_handling": "single-page-application"` in
+`wrangler.jsonc` (already set), and on **Pages** it is a `public/_redirects` file
+containing `/*  /index.html  200`. Workers rejects that redirect rule outright, so do
+not add it unless you have actually moved to Pages. Full walkthrough in `DEPLOY.md`.
 
 ---
 

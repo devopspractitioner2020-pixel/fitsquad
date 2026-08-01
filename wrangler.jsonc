@@ -22,8 +22,13 @@
     // exists at that path — Workers serves index.html instead and React
     // Router takes it from there.
     //
-    // This supersedes public/_redirects, which is kept only in case the
-    // project is ever moved back to Cloudflare Pages.
+    // This is the ONLY thing doing SPA routing here. public/_redirects used
+    // to carry the Pages-style `/*  /index.html  200` fallback as a backup;
+    // Workers rejects that rule outright ("Infinite loop detected", code
+    // 100324) because it already normalises /index.html and the rule would
+    // rematch its own output. The file is gone — restore it only if this
+    // project ever moves back to Cloudflare Pages, where it is required and
+    // this setting is ignored.
     "not_found_handling": "single-page-application"
   }
 

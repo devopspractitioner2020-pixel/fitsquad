@@ -622,8 +622,8 @@ for testing and let git be the record of what is live.
 
 ### 6.7 Confirm the security headers survived
 
-`public/_headers` and `public/_redirects` are copied into `dist/` by Vite, and
-Workers static assets honour both, same as Pages did. Verify:
+`public/_headers` is copied into `dist/` by Vite, and Workers static assets
+honour it, same as Pages did. Verify:
 
 ```bash
 curl -sI https://fitsquad.YOUR-SUBDOMAIN.workers.dev | grep -i \
@@ -653,6 +653,16 @@ add the two `VITE_` variables under **Settings → Environment variables**
 on Pages). `wrangler.jsonc` is ignored by Pages and harmless. Cloudflare is
 steering new projects to Workers, so the instructions above are the path of
 least resistance.
+
+If you do switch, recreate `public/_redirects` with the single line:
+
+```
+/*  /index.html  200
+```
+
+Pages needs it for deep links and ignores `not_found_handling`; Workers is the
+other way round and rejects that exact rule. The two platforms are mutually
+exclusive on this one file, which is why it is not simply left in place.
 
 ## Step 7. Close the loop after the domain is live
 
@@ -708,7 +718,8 @@ supabase functions deploy resolve-link
 | `wrangler deploy`: *the directory specified by the "assets.directory" field … does not exist* | `wrangler deploy` was run on its own. `dist/` is gitignored build output and does not exist until Vite writes it | `npm run deploy` — it builds first, then uploads. See §6.6b. |
 | Feed loads but names are blank | Migration 0002 not run | Run it; it backfills existing users. |
 | Photos upload but don't display | Bucket not public | `select id, public from storage.buckets where id = 'post-photos';` must be `true`. |
-| Deep links 404 | `_redirects` missing from build | Confirm `dist/_redirects` exists after `npm run build`. |
+| Deep links 404 on a hard refresh | `not_found_handling` missing from `wrangler.jsonc` | It must be `"single-page-application"`. On Workers this — not `_redirects` — is what serves index.html for `/me` and `/saved/tips`. |
+| Deploy uploads every asset, then fails: *Invalid _redirects configuration … Infinite loop detected … code 100324* | A `public/_redirects` containing the Pages SPA fallback `/*  /index.html  200`. Workers rejects it: it already normalises `/index.html`, so the rule rematches its own output | Delete `public/_redirects`. `not_found_handling` in `wrangler.jsonc` does the same job on Workers. The failure comes at the very last API call, after a successful upload, which makes it look like an outage rather than a config error. |
 | Feed suddenly empty after 0004 | You and your squad-mates are in different squads | `select * from my_squads();` then share the join code. The backfill only runs when no memberships exist yet. |
 | Video embed is a blank black box | CSP `frame-src` missing that host | `public/_headers` lists tiktok / instagram / youtube-nocookie. CSP frame blocks are near-silent — this is almost always the cause. |
 | "That link isn't recognised" for a good link | It is a profile link, not a video | The field now says so specifically. Open the video itself → Share → Copy link. |
