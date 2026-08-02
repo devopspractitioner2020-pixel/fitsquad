@@ -96,6 +96,55 @@ describe('generatePlan', () => {
     await expect(generatePlan({ name: 'Vic' })).rejects.toThrow('network down')
   })
 
+  // The message Kati saw. supabase-js says "Failed to send a request to the
+  // Edge Function" for every transport failure, most often a CORS rejection
+  // — the browser blocked the response because the site's origin is not in
+  // ALLOWED_ORIGINS. A blocked response never reaches JS, so there is
+  // nothing to unwrap and the raw wording helps nobody: it reads as a broken
+  // app to the person, and names no cause for whoever has to fix it.
+  it('replaces the opaque supabase-js transport message with something actionable', async () => {
+    const fetchError = new Error('Failed to send a request to the Edge Function')
+    invoke.mockResolvedValue({ data: null, error: fetchError })
+
+    const err = await generatePlan({ name: 'Vic' }).catch((e) => e)
+    expect(err.message).not.toMatch(/failed to send a request/i)
+    expect(err.message).toMatch(/could not reach the plan service/i)
+    expect(err.transport).toBe(true)
+  })
+
+  it('names the origin that needs allowing, since that is the fix', async () => {
+    invoke.mockResolvedValue({ data: null, error: new Error('Failed to fetch') })
+    const err = await generatePlan({ name: 'Vic' }).catch((e) => e)
+    expect(err.message).toContain(window.location.origin)
+  })
+
+  it('keeps the original error as the cause, for the console', async () => {
+    const fetchError = new Error('Failed to send a request to the Edge Function')
+    invoke.mockResolvedValue({ data: null, error: fetchError })
+    const err = await generatePlan({ name: 'Vic' }).catch((e) => e)
+    expect(err.cause).toBe(fetchError)
+  })
+
+  it('does not blame CORS for a real server error that has a body', async () => {
+    invoke.mockResolvedValue({
+      data: null,
+      error: httpError(500, { error: 'Claude API 401: bad key' }),
+    })
+    const err = await generatePlan({ name: 'Vic' }).catch((e) => e)
+    expect(err.message).toBe('Claude API 401: bad key')
+    expect(err.transport).toBeUndefined()
+  })
+
+  it('does not blame CORS for a response whose body will not parse', async () => {
+    const raw = new Error('Bad gateway')
+    raw.context = { status: 502, json: async () => { throw new Error('not json') } }
+    invoke.mockResolvedValue({ data: null, error: raw })
+
+    const err = await generatePlan({ name: 'Vic' }).catch((e) => e)
+    expect(err.message).toBe('Bad gateway')
+    expect(err.transport).toBeUndefined()
+  })
+
   it('throws when the function replies 200 with an error body', async () => {
     invoke.mockResolvedValue({ data: { error: 'Unknown mode.' }, error: null })
     await expect(generatePlan({ name: 'Vic' })).rejects.toThrow('Unknown mode.')

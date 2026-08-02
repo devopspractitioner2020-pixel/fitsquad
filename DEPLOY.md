@@ -158,8 +158,20 @@ Then, once you know your production URL, lock down who may call the function.
 Until you set this the function accepts requests from any origin:
 
 ```bash
-supabase secrets set ALLOWED_ORIGINS="https://fitsquad.inkaitech.com,http://localhost:5173"
+supabase secrets set ALLOWED_ORIGINS="https://fitsquad.YOUR-SUBDOMAIN.workers.dev,https://fitsquad.inkaitech.com,http://localhost:5173"
 ```
+
+**Include the `workers.dev` origin.** It is the address your app is actually
+served from until the custom domain exists, and an origin missing from this
+list is not a soft failure: the function replies with someone else's
+`Access-Control-Allow-Origin`, the browser discards the response before your
+code sees it, and every plan generation from the live site dies with
+"Failed to send a request to the Edge Function". Nothing appears in the
+function's logs, because the request was answered — the browser threw the
+answer away.
+
+The trap is that it works fine for whoever is developing: `localhost:5173` is
+on the list, so plan generation succeeds locally and fails for everyone else.
 
 Optionally pin the model explicitly. The function defaults to
 `claude-sonnet-5` — 1M context, 128k max output — which is what you want:
@@ -264,6 +276,34 @@ why.
 To read the whole thing, open the row in **Table Editor → plans** and expand
 the `data` cell — or log into the app and open the plan, which is the real
 test.
+
+### 2.5a Prove whether CORS is the problem
+
+If plan generation fails on the live site with *"Failed to send a request to
+the Edge Function"*, this settles it in one command. Send a preflight as if
+you were the browser on that origin:
+
+```bash
+curl -si -X OPTIONS \
+  "https://YOUR_PROJECT_REF.supabase.co/functions/v1/generate-plan" \
+  -H "Origin: https://fitsquad.YOUR-SUBDOMAIN.workers.dev" \
+  -H "Access-Control-Request-Method: POST" \
+  | grep -i access-control-allow-origin
+```
+
+The header must echo **your** origin back. If it names a different site — the
+custom domain you have not set up yet, say — that is the bug: the browser
+compares the two, sees a mismatch, and drops the response before your code
+runs. Fix it with:
+
+```bash
+supabase secrets set ALLOWED_ORIGINS="https://fitsquad.YOUR-SUBDOMAIN.workers.dev,http://localhost:5173"
+supabase functions deploy generate-plan
+```
+
+Secrets are read at invocation, but redeploy anyway so you know exactly which
+version is live. And check both functions — `resolve-link` reads the same
+list, so video links break the same way.
 
 ### 2.5b Check short-link expansion
 
@@ -920,6 +960,7 @@ supabase functions deploy resolve-link
 | Short link posts but shows a tap-through card | `resolve-link` not deployed, or TikTok refused | `supabase functions deploy resolve-link`, then check the curl below. The post is never lost over this. |
 | Worker → Domains → Add → Custom domain says *No zones found* | `inkaitech.com` is not a Cloudflare zone — its nameservers still point at Hostinger (`ns*.dns-parking.com`) | Add the domain to Cloudflare and move the nameservers. Custom Domains need an active zone on the same account; partial/CNAME setup is not supported for them. Full walkthrough in §6.8. |
 | Email stops arriving after moving nameservers | The `MX` / `SPF` / `DKIM` / `DMARC` records did not come across in Cloudflare's import | Re-add them in Cloudflare DNS from the screenshot you took in §6.8 step 1. Mail routing is DNS; moving nameservers moves it. |
+| **Failed to send a request to the Edge Function** when generating a plan | Almost always CORS: this site's origin is missing from `ALLOWED_ORIGINS`, so the browser discarded the response. Also matches a genuinely unreachable function | Check the list, then prove it with the curl below. The app now names the origin that needs adding in the error itself. |
 | Someone signed up with a join code and is in NO squad at all — not yours, not their own | `handle_new_user()` was reverted to the 0002 version by a re-run, so the trigger stopped resolving join codes. Silent: signup still succeeds | Run `0009_signup_squad_fix.sql`. It restores the trigger, adds a second one that a re-run of 0002 cannot remove, and backfills the affected people into the squad whose code they typed. |
 | Squad-mates joined but nobody can see anybody | The leaderboard used to be built from `posts`/`weigh_ins` only, so members with no logs did not appear — and if nobody had logged in the range, the squad looked empty to everyone in it | Run `0008_squad_roster.sql` and deploy. The board is now built from the roster: everyone appears from the moment they join, on zero. Confirm membership with the query in §1b. |
 | Squad tab shows no join code and no member count, on one account but not another | That account has no `squad_members` row — created before the 0004 signup trigger existed, or it left its last squad | Run `0007_squad_for_everyone.sql`. The screen also has a **Create my squad** button now, which fixes it from the app without any SQL. |

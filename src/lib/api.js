@@ -56,6 +56,31 @@ async function invoke(body) {
   return data
 }
 
+// supabase-js reports every transport-level failure with one sentence:
+// "Failed to send a request to the Edge Function". It is the same message
+// whether the function is missing, the network dropped, or — by far the most
+// common cause in practice — the browser blocked the response because the
+// site's origin is not in the function's ALLOWED_ORIGINS list. A CORS
+// rejection never reaches JavaScript as a readable response, so there is
+// genuinely nothing to unwrap; the only way to make this diagnosable is to
+// say what to check and to name the origin that needs allowing.
+//
+// It reads as an app bug to the person in front of it, and as nothing at all
+// to whoever has to fix it. Kati hit exactly this and the message told
+// neither of them anything.
+export const TRANSPORT_HINT =
+  'Could not reach the plan service. This is a server setting, not something you did — '
+  + 'if it keeps happening, the site address below needs adding to the function’s allowed origins.'
+
+export function describeInvokeFailure(origin) {
+  const where = origin || (typeof window !== 'undefined' ? window.location.origin : '')
+  return where ? `${TRANSPORT_HINT}\n${where}` : TRANSPORT_HINT
+}
+
+const isTransportFailure = (error) =>
+  !error?.context
+  || (typeof error.context.json !== 'function' && typeof error.context.status !== 'number')
+
 async function unwrapFunctionError(error) {
   try {
     const res = error?.context
@@ -70,8 +95,18 @@ async function unwrapFunctionError(error) {
       }
     }
   } catch {
-    // fall through to the generic error below
+    // A non-JSON body — an HTML error page from a proxy, say. Fall through.
   }
+
+  if (isTransportFailure(error)) {
+    const e = new Error(describeInvokeFailure())
+    e.transport = true
+    // Keep the original wording for the console, so the underlying
+    // supabase-js message is still available when debugging.
+    e.cause = error
+    return e
+  }
+
   return error instanceof Error ? error : new Error(String(error))
 }
 

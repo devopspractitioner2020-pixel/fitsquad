@@ -238,7 +238,10 @@ export default function Intake() {
           <span className="text-muted">I understand this is general nutrition and training information, not medical advice. If I have any health condition or take medication I will consult a doctor before making changes.</span>
         </label>
 
-        {err && <p className="text-[#ff9b8a] text-sm mb-3">{err}</p>}
+        {/* whitespace-pre-line: the transport-failure message puts the site's
+            origin on its own line, and HTML would otherwise collapse it into
+            the sentence where it is unreadable. */}
+        {err && <p className="text-[#ff9b8a] text-sm mb-3 whitespace-pre-line break-words">{err}</p>}
         {saved && (
           <p className="text-mint text-sm mb-3" role="status">
             Saved. Your answers will be here next time — and they are what the next plan is built from.
