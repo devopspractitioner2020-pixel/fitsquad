@@ -9,15 +9,26 @@ const defaultSquadName = (displayName) => `${displayName?.trim() || 'My'}'s Squa
 
 // The leaderboard and the squad roster.
 //
-// Note what is NOT here: any filtering by squad. Row Level Security scopes
-// `posts` and `weigh_ins` to people you share a squad with, so a plain
-// `select *` already returns exactly your squad's rows. Putting the filter in
-// the query too would be duplicated logic that could drift from the policy.
+// THE RULE THIS SCREEN GOT WRONG, and it is worth stating plainly because it
+// made the core feature look broken: MEMBERSHIP IS NOT ACTIVITY.
+//
+// The leaderboard used to be built purely from `posts` and `weigh_ins`, so a
+// person only existed on this screen once they had logged something. Two
+// people who joined with a valid code and had not yet logged a meal showed
+// up nowhere — the panel above said "3 members" and the list below said "No
+// logs in this range yet", and everyone involved reasonably concluded the
+// join had failed. It had not.
+//
+// The list is now driven by the roster: every member appears from the moment
+// they join, with zeroes until they log. Activity decorates the roster; it
+// does not decide who is on it.
 export default function Squad() {
   const { user, profile, signOut } = useAuth()
   const [range, setRange] = useState('week') // week | all
   const [rows, setRows] = useState([])
   const [squads, setSquads] = useState([])
+  const [squadId, setSquadId] = useState(null)
+  const [roster, setRoster] = useState([])
   const [loadedSquads, setLoadedSquads] = useState(false)
   const [showJoin, setShowJoin] = useState(false)
   const [code, setCode] = useState('')
@@ -33,26 +44,47 @@ export default function Squad() {
     // every user on every visit, in the moment before the answer arrives.
     setLoadedSquads(true)
     if (error) { setErr(error.message); return }
-    setSquads(data ?? [])
+    const list = data ?? []
+    setSquads(list)
+
+    // Signed up with a code and still in no squad: the database did not
+    // honour it. That was a real bug (see migration 0009), and even with it
+    // fixed this is the cheapest possible recovery — offer the code they
+    // already typed, pre-filled, instead of making them find it again.
+    const signupCode = user?.user_metadata?.join_code
+    if (list.length === 0 && signupCode) {
+      setCode(String(signupCode).toUpperCase())
+      setShowJoin(true)
+    }
+    // Keep the current selection if it still exists; otherwise fall back to
+    // the first. Re-selecting blindly would bounce you back to squad one
+    // every time this reloads.
+    setSquadId((prev) => (list.some((s) => s.id === prev) ? prev : list[0]?.id ?? null))
+    return list
   }
 
-  async function load() {
+  async function load(sid = squadId) {
+    if (!sid) { setRows([]); setRoster([]); return }
+
     const since = range === 'week' ? new Date(Date.now() - 7 * 864e5).toISOString() : '1970-01-01'
 
     // Posts drive the ranking; weigh-ins add the weight column. Both are
-    // fetched for the SAME window — the old version filtered posts by range
-    // but read every weigh-in ever, so "This week" showed all-time change.
-    const [{ data: posts }, { data: weighs }, { data: profiles }] = await Promise.all([
+    // fetched for the SAME window — an earlier version filtered posts by
+    // range but read every weigh-in ever, so "This week" showed all-time
+    // change.
+    //
+    // RLS scopes both to people you share a squad with, which is a wider net
+    // than one squad once you are in two. The roster is what narrows it.
+    const [{ data: members, error: rosterErr }, { data: posts }, { data: weighs }] = await Promise.all([
+      supabase.rpc('squad_roster', { sid }),
       supabase.from('posts').select('user_id,kind,is_healthy,created_at').gte('created_at', since),
       supabase.from('weigh_ins').select('user_id,weight_kg,created_at').gte('created_at', since).order('created_at'),
-      supabase.from('profiles').select('id,display_name'),
     ])
 
-    // Names come from `profiles`, not from the denormalised `posts.author_name`.
-    // A rename should update the whole leaderboard, and a member who has
-    // logged only weigh-ins must still appear — under the old post-driven
-    // rollup they were invisible.
-    const nameOf = Object.fromEntries((profiles ?? []).map((p) => [p.id, p.display_name]))
+    if (rosterErr) { setErr(rosterErr.message); return }
+    const people = members ?? []
+    setRoster(people)
+
     const byUser = {}
     const seed = (uid) => (byUser[uid] ??= { meals: 0, workouts: 0, first: null, last: null })
 
@@ -67,25 +99,34 @@ export default function Squad() {
       u.last = w.weight_kg
     }
 
-    const list = Object.entries(byUser)
-      .map(([uid, v]) => ({
-        uid,
-        name: nameOf[uid] ?? 'Squad member',
-        meals: v.meals,
-        workouts: v.workouts,
-        logs: v.meals + v.workouts,
-        change: v.first != null && v.last != null ? +(v.last - v.first).toFixed(1) : null,
-        isMe: uid === user?.id,
-      }))
+    // Start from the roster, not from the activity. Everyone in the squad is
+    // on the board; the ones who have not logged sit at the bottom on zero.
+    const list = people
+      .map((m) => {
+        const v = byUser[m.user_id] ?? { meals: 0, workouts: 0, first: null, last: null }
+        return {
+          uid: m.user_id,
+          name: m.display_name,
+          role: m.role,
+          meals: v.meals,
+          workouts: v.workouts,
+          logs: v.meals + v.workouts,
+          change: v.first != null && v.last != null ? +(v.last - v.first).toFixed(1) : null,
+          isMe: m.user_id === user?.id,
+        }
+      })
       .sort((a, b) => b.logs - a.logs || a.name.localeCompare(b.name))
 
     setRows(list)
   }
 
+  // One effect asks which squads you are in; the other loads whichever is
+  // selected. Loading from both would fetch everything twice on mount.
   useEffect(() => { loadSquads() }, [user?.id])
-  useEffect(() => { load() }, [range, user?.id])
+  useEffect(() => { load(squadId) }, [range, squadId])
 
-  const squad = squads[0]
+  const squad = squads.find((s) => s.id === squadId) ?? squads[0]
+  const memberCount = roster.length || Number(squad?.member_count ?? 0)
 
   async function copy(text, what) {
     try {
@@ -143,6 +184,30 @@ export default function Squad() {
         <h1 className="font-display text-[42px] font-800 mb-1">{squad?.name ?? 'Leaderboard'}</h1>
         <p className="text-muted mb-5">Ranked by healthy meals + workouts logged.</p>
 
+        {/* More than one squad, so say which one you are looking at and let
+            people switch. Without this the screen silently showed the oldest
+            one — including its join code, which is a good way to hand out a
+            code to the wrong squad and then wonder why nobody appears. */}
+        {squads.length > 1 && (
+          <div className="flex gap-2 flex-wrap mb-4" role="tablist" aria-label="Your squads">
+            {squads.map((s) => (
+              <button
+                key={s.id}
+                role="tab"
+                aria-selected={s.id === squad?.id}
+                onClick={() => setSquadId(s.id)}
+                className={`px-4 py-2 rounded-full border text-sm font-700 ${
+                  s.id === squad?.id
+                    ? 'bg-mint/[0.12] border-mint/50 text-mint'
+                    : 'bg-card border-line text-muted'
+                }`}
+              >
+                {s.name}
+              </button>
+            ))}
+          </div>
+        )}
+
         {/* Invite panel — the answer to "how do I add people". */}
         {squad && (
           <div className="bg-card border border-mint/40 rounded-xl2 p-5 mb-6">
@@ -153,10 +218,13 @@ export default function Squad() {
                   {squad.join_code}
                 </div>
               </div>
+              {/* Counted from the roster once it has loaded, not from the
+                  separate member_count. Two numbers from two queries is how
+                  you end up displaying "3 members" above a list of one. */}
               <div className="text-right">
-                <div className="font-display text-[26px] font-800">{squad.member_count}</div>
+                <div className="font-display text-[26px] font-800" data-testid="member-count">{memberCount}</div>
                 <div className="text-muted text-[12px] uppercase tracking-wide">
-                  member{Number(squad.member_count) === 1 ? '' : 's'}
+                  member{memberCount === 1 ? '' : 's'}
                 </div>
               </div>
             </div>
@@ -182,8 +250,9 @@ export default function Squad() {
           <div className="bg-card border border-mint/40 rounded-xl2 p-5 mb-6">
             <div className="font-display text-[22px] font-700 mb-1">You’re not in a squad yet</div>
             <p className="text-muted text-sm mb-4">
-              Create one and you’ll get a join code to share. Your logs stay with you either
-              way — a squad decides who can see them.
+              {user?.user_metadata?.join_code
+                ? 'You signed up with a join code but it didn’t take. The code is filled in below — tap Join squad to fix it. Or start your own here.'
+                : 'Create one and you’ll get a join code to share. Your logs stay with you either way — a squad decides who can see them.'}
             </p>
             <label className="block">
               <span className="label">Squad name</span>
@@ -246,10 +315,25 @@ export default function Squad() {
         </div>
 
         <div className="space-y-3">
-          {rows.length === 0 && <p className="text-muted text-center py-16">No logs in this range yet. Be the first.</p>}
+          {/* "No logs" is no longer the empty state — an empty list now means
+              an empty squad, which is a different sentence and a different
+              problem. Everyone in the squad is listed regardless of activity;
+              the ones on zero are simply on zero. */}
+          {rows.length === 0 && squad && (
+            <p className="text-muted text-center py-16">
+              Just you so far. Share the join code above to fill this out.
+            </p>
+          )}
+          {rows.length > 0 && rows.every((r) => r.logs === 0) && (
+            <p className="text-muted-2 text-sm text-center pb-2">
+              Nobody has logged anything {range === 'week' ? 'this week' : 'yet'} — the squad is
+              here, the board is just waiting.
+            </p>
+          )}
           {rows.map((r, i) => (
             <div
               key={r.uid}
+              data-testid="leaderboard-row"
               className={`flex items-center gap-4 bg-card border rounded-xl2 p-5 ${r.isMe ? 'border-mint/50' : 'border-line'}`}
             >
               <div className="w-12 h-12 rounded-full bg-mint grid place-items-center font-display text-[20px] font-800 text-[#05201A]">{i + 1}</div>

@@ -9,8 +9,14 @@ Total time: about 45 minutes, most of it waiting for DNS.
 
 ## Step 1b. Run the migrations (5 min — do this first)
 
-Five migrations to run in **SQL Editor → New query**, in order. All are
-idempotent, so running them twice is harmless.
+Eight migrations to run in **SQL Editor → New query**, **in order**.
+
+> ⚠️ Each file is idempotent on its own, but the ORDER matters and re-running
+> an early one alone is not harmless. `0002` and `0004` both define
+> `handle_new_user()`, and `create or replace` means the last one to run
+> wins — so re-running `0002` after `0004` silently reverts new signups to
+> landing in no squad, with no error anywhere. If you ever re-run an earlier
+> file, finish by running `0009` again. It is written to be the last word.
 
 1. `0002_hardening.sql` — profile-creation trigger and sanity constraints.
 2. `0003_plan_data.sql` — adds `plans.data`, where structured plans live.
@@ -27,8 +33,16 @@ idempotent, so running them twice is harmless.
    none. 0004 covered new signups and the users who existed when it ran;
    anyone created in between, or who left their last squad, was left with a
    Squad screen that had no join code and no way to get one.
+7. `0008_squad_roster.sql` — `squad_roster()`, so the Squad screen can list
+   who is in a squad instead of inferring it from who has logged something.
+   Without it, members who had not yet logged a meal were invisible to each
+   other and the join looked like it had failed.
+8. `0009_signup_squad_fix.sql` — **the important one.** Restores the
+   squad-aware signup trigger, adds a second independently-named trigger so
+   a future re-run of `0002` cannot break it again, and backfills everyone
+   currently without a squad *using the join code they signed up with*.
 
-Confirm all six:
+Confirm all eight:
 
 ```sql
 select tgname from pg_trigger where tgname = 'on_auth_user_created';
@@ -43,15 +57,45 @@ select to_regclass('public.saved_posts') as saved_posts;
 select au.email from auth.users au
 left join public.squad_members m on m.user_id = au.id
 where m.user_id is null;
+
+select to_regprocedure('public.squad_roster(uuid)') as squad_roster;
+
+-- Both signup triggers must be present. Expect two rows:
+--   on_auth_user_created, on_auth_user_created_squad
+select tgname from pg_trigger
+where tgrelid = 'auth.users'::regclass and not tgisinternal;
 ```
 
-Every user should have a squad. If any don't:
+### Who is actually in which squad
+
+The question to answer whenever someone says a join "did nothing". It reads
+the membership table directly, so it is the ground truth the app is rendering:
 
 ```sql
-select u.email from auth.users u
-left join squad_members m on m.user_id = u.id
-where m.user_id is null;
+select s.name, s.join_code, p.display_name, m.role, m.joined_at
+from squad_members m
+join squads s on s.id = m.squad_id
+left join profiles p on p.id = m.user_id
+order by s.name, m.joined_at;
 ```
+
+If someone signed up with a code and still ended up alone, they typed a code
+that matched no squad — the signup trigger silently falls back to giving them
+one of their own. This finds them:
+
+```sql
+select au.email,
+       au.raw_user_meta_data ->> 'join_code' as code_they_typed,
+       s.name as squad_they_landed_in, s.join_code
+from auth.users au
+join squad_members m on m.user_id = au.id
+join squads s on s.id = m.squad_id
+where coalesce(au.raw_user_meta_data ->> 'join_code', '') <> ''
+  and s.join_code is distinct from upper(au.raw_user_meta_data ->> 'join_code');
+```
+
+The fix for those is one line in the app: they open **Squad → Join another
+squad with a code** and type the right one.
 
 ### What 0002 fixes
 
@@ -549,7 +593,7 @@ Matching the fields on that screen, top to bottom:
 | Field | Value |
 |---|---|
 | **Project name** | `fitsquad` — must match `name` in `wrangler.jsonc` |
-| **Build command** | `npm run build` |
+| **Build command** | `npm run ci` — runs the test suite and then the build, so a red suite fails the deploy instead of shipping |
 | **Deploy command** | `npx wrangler deploy` |
 | **Non-production branch deploy command** | `npx wrangler versions upload` (the default is right — it uploads a preview without touching production) |
 | **Path** | `/` — the repo root, since `package.json` is there |
@@ -619,10 +663,14 @@ is nothing to upload until Vite has written it. Run both halves:
 npm run deploy
 ```
 
-which is exactly `npm run build && npx wrangler deploy`. Use the script rather
-than typing the two commands: the `&&` is what stops a failed build from
-silently shipping the *previous* build's `dist/` to production, and it is the
-easiest thing to leave out by hand.
+which is exactly `npm run test && npm run build && npx wrangler deploy`. Use the script rather than typing the commands: the `&&`
+chain is what stops a red test suite or a failed build from silently shipping
+the *previous* build's `dist/` to production, and it is the easiest thing to
+leave out by hand.
+
+The same gate applies to the Cloudflare pipeline — its build command is
+`npm run ci`, which runs the suite before the build. A broken squad, plan
+gate, or save path fails the deploy rather than reaching anyone.
 
 Pushing to `main` is still the normal path — Cloudflare builds and deploys on
 its own, and the deployed bundle then matches the commit. A hand deploy ships
@@ -872,6 +920,8 @@ supabase functions deploy resolve-link
 | Short link posts but shows a tap-through card | `resolve-link` not deployed, or TikTok refused | `supabase functions deploy resolve-link`, then check the curl below. The post is never lost over this. |
 | Worker → Domains → Add → Custom domain says *No zones found* | `inkaitech.com` is not a Cloudflare zone — its nameservers still point at Hostinger (`ns*.dns-parking.com`) | Add the domain to Cloudflare and move the nameservers. Custom Domains need an active zone on the same account; partial/CNAME setup is not supported for them. Full walkthrough in §6.8. |
 | Email stops arriving after moving nameservers | The `MX` / `SPF` / `DKIM` / `DMARC` records did not come across in Cloudflare's import | Re-add them in Cloudflare DNS from the screenshot you took in §6.8 step 1. Mail routing is DNS; moving nameservers moves it. |
+| Someone signed up with a join code and is in NO squad at all — not yours, not their own | `handle_new_user()` was reverted to the 0002 version by a re-run, so the trigger stopped resolving join codes. Silent: signup still succeeds | Run `0009_signup_squad_fix.sql`. It restores the trigger, adds a second one that a re-run of 0002 cannot remove, and backfills the affected people into the squad whose code they typed. |
+| Squad-mates joined but nobody can see anybody | The leaderboard used to be built from `posts`/`weigh_ins` only, so members with no logs did not appear — and if nobody had logged in the range, the squad looked empty to everyone in it | Run `0008_squad_roster.sql` and deploy. The board is now built from the roster: everyone appears from the moment they join, on zero. Confirm membership with the query in §1b. |
 | Squad tab shows no join code and no member count, on one account but not another | That account has no `squad_members` row — created before the 0004 signup trigger existed, or it left its last squad | Run `0007_squad_for_everyone.sql`. The screen also has a **Create my squad** button now, which fixes it from the app without any SQL. |
 | Join code says no squad found | Code typed with an O or l | The alphabet excludes `0 O 1 I L` deliberately. Re-read the code. |
 | Saving does nothing, console shows `404` on `/rest/v1/saved_posts` | Migration 0006 not run | Run `0006_saved_posts.sql`. A PostgREST 404 on a collection means the relation is not in its schema cache. The app now says this in the card rather than only in the console. |

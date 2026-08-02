@@ -24,6 +24,18 @@
 -- ------------------------------------------------------------
 -- display_name comes from the signUp options.data payload; fall back to the
 -- local part of the email so the column is never empty.
+-- ⚠️  DO NOT RE-RUN THIS FILE ON ITS OWN.
+--
+-- This version of handle_new_user() creates a profile and nothing else.
+-- 0004 replaced it with a version that also resolves the signup join_code
+-- into a squad membership, and 0009 replaced that again. `create or replace`
+-- means the last one to run wins, so re-running THIS file silently reverts
+-- new signups to landing in no squad at all — with no error and no warning.
+-- That is exactly how two real users ended up squadless.
+--
+-- If you have run this file since 0004, run 0009_signup_squad_fix.sql. It
+-- restores the correct trigger and backfills anyone who was missed.
+--
 create or replace function public.handle_new_user()
 returns trigger
 language plpgsql

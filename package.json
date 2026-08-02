@@ -13,7 +13,8 @@
     "seed": "node scripts/seed.mjs",
     "seed:reset": "node scripts/seed.mjs --reset",
     "seed:weights": "node scripts/seed-weights.mjs",
-    "deploy": "npm run build && npx wrangler deploy"
+    "deploy": "npm run test && npm run build && npx wrangler deploy",
+    "ci": "npm run test && npm run build"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",
