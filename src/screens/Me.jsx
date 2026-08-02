@@ -7,6 +7,7 @@ import { getLatestPlan, effectiveStatus } from '../lib/api'
 import { getSavedCounts, KIND_TO_SLUG } from '../lib/saved'
 import { weeklyWeights, weightChange } from '../lib/weight'
 import { Header } from '../components/ui'
+import { useUnseenActivity } from '../lib/useUnseenActivity'
 
 // One week of the chart, in pixels. Wide enough that the dots do not collide
 // with a fingertip; narrow enough that a couple of months is one flick.
@@ -15,6 +16,7 @@ const WEEK_PX = 56
 export default function Me({ onLogWeight }) {
   const { user, profile, signOut } = useAuth()
   const nav = useNavigate()
+  const { unseen } = useUnseenActivity(user?.id)
   const [plan, setPlan] = useState(null)
   const [weighIns, setWeighIns] = useState([])
   const [counts, setCounts] = useState({ meals: 0, workouts: 0 })
@@ -81,7 +83,7 @@ export default function Me({ onLogWeight }) {
 
   return (
     <div className="app-shell">
-      <Header onSignOut={signOut} />
+      <Header onSignOut={signOut} onActivity={() => nav('/activity')} unseen={unseen} />
       <div className="px-5">
         <p className="text-muted uppercase tracking-[0.14em] text-[13px] mt-2">Personal</p>
         <h1 className="font-display text-[42px] font-800 mb-5">{profile?.display_name ?? 'You'}</h1>

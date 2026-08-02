@@ -1,14 +1,22 @@
 import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import { Header } from '../components/ui'
+import { useUnseenActivity } from '../lib/useUnseenActivity'
 import PostCard from '../components/PostCard'
 import { getSavedPostIds } from '../lib/saved'
+import { getReactions } from '../lib/reactions'
+import { getCommentCounts } from '../lib/comments'
 
 export default function Feed() {
   const { user, profile, signOut } = useAuth()
+  const nav = useNavigate()
+  const { unseen } = useUnseenActivity(user?.id)
   const [posts, setPosts] = useState([])
   const [savedIds, setSavedIds] = useState(() => new Set())
+  const [reactions, setReactions] = useState(() => new Map())
+  const [commentCounts, setCommentCounts] = useState(() => new Map())
   const [summary, setSummary] = useState({ meals: 0, workouts: 0, cheats: 0 })
 
   async function load() {
@@ -16,6 +24,22 @@ export default function Feed() {
     const { data: recent } = await supabase
       .from('posts').select('*').order('created_at', { ascending: false }).limit(50)
     setPosts(recent ?? [])
+
+    // One query for the whole feed. Fifty cards each fetching their own
+    // reactions would be fifty round trips before anything settled.
+    const ids = (recent ?? []).map((p) => p.id)
+    try {
+      setCommentCounts(await getCommentCounts(ids))
+    } catch {
+      // Same reasoning as reactions below: decoration, not the feed itself.
+    }
+    try {
+      setReactions(await getReactions(ids, user?.id))
+    } catch {
+      // Reactions are decoration on top of the feed; failing to read them
+      // must not cost the reader the posts. The buttons render at zero and
+      // correct themselves on the next load.
+    }
 
     const { data: week } = await supabase
       .from('posts').select('kind,is_healthy,is_cheat').gte('created_at', sevenAgo)
@@ -37,8 +61,30 @@ export default function Feed() {
     }
   }
 
-  useEffect(() => { load() }, [])
+  useEffect(() => { load() }, [user?.id])
   useEffect(() => { loadSaved() }, [user?.id])
+
+  function onReactionChange(postId, emoji, on) {
+    setReactions((prev) => {
+      const copy = new Map(prev)
+      const entry = copy.get(postId) ?? { counts: {}, mine: new Set() }
+      const counts = { ...entry.counts }
+      const mine = new Set(entry.mine)
+      if (on) {
+        if (!mine.has(emoji)) counts[emoji] = (counts[emoji] ?? 0) + 1
+        mine.add(emoji)
+      } else {
+        if (mine.has(emoji)) counts[emoji] = Math.max(0, (counts[emoji] ?? 0) - 1)
+        mine.delete(emoji)
+      }
+      copy.set(postId, { counts, mine })
+      return copy
+    })
+  }
+
+  function onCommentCountChange(postId, count) {
+    setCommentCounts((prev) => new Map(prev).set(postId, count))
+  }
 
   function onSavedChange(postId, next) {
     setSavedIds((prev) => {
@@ -51,10 +97,15 @@ export default function Feed() {
 
   return (
     <div className="app-shell">
-      <Header onSignOut={signOut} />
+      <Header onSignOut={signOut} onActivity={() => nav('/activity')} unseen={unseen} />
       <div className="px-5">
-        <p className="text-muted uppercase tracking-[0.14em] text-[13px] mt-2">Hey {profile?.display_name ?? 'there'}</p>
-        <h1 className="font-display text-[42px] font-800 mb-5">Squad Feed</h1>
+        {/* "Squad Feed" is gone. It was a 42px heading naming the screen you
+            already navigated to, and on a phone it pushed the first real post
+            most of the way off the bottom. The greeting carries the same
+            context in a fraction of the space. */}
+        <h1 className="font-display text-[28px] font-800 mt-2 mb-5">
+          Hey {profile?.display_name ?? 'there'}
+        </h1>
 
         {/* Weekly summary */}
         <div className="bg-card border border-line rounded-xl2 p-5 mb-6">
@@ -83,6 +134,10 @@ export default function Feed() {
               userId={user?.id}
               saved={savedIds.has(p.id)}
               onSavedChange={onSavedChange}
+              reactions={reactions.get(p.id)}
+              onReactionChange={onReactionChange}
+              commentCount={commentCounts.get(p.id) ?? 0}
+              onCommentCountChange={onCommentCountChange}
             />
           ))}
         </div>

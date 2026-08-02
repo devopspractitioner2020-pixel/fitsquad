@@ -448,3 +448,103 @@ describe('signed up with a code but landed nowhere', () => {
     expect(screen.queryByLabelText(/squad join code/i)).toBeNull()
   })
 })
+
+// "How do I change the name of the squad? I can't see that functionality."
+// The RLS policy for it has existed since migration 0004; no screen ever
+// offered it, so a squad kept the name it was born with forever.
+describe('renaming the squad', () => {
+  const ME = member('u1', 'Vic', 'owner')
+
+  it('offers Rename to the owner', async () => {
+    withState({ rosters: { s1: [ME] } })
+    await renderSquad()
+    expect(await screen.findByRole('button', { name: /rename/i })).toBeInTheDocument()
+  })
+
+  // A member renaming the squad out from under everyone is not a feature.
+  it('does not offer it to a plain member', async () => {
+    withState({ squads: [{ ...SQUAD, role: 'member' }], rosters: { s1: [ME] } })
+    await renderSquad()
+    await screen.findByText('ABC234')
+    expect(screen.queryByRole('button', { name: /rename/i })).toBeNull()
+  })
+
+  it('opens pre-filled with the current name, so it is an edit not a retype', async () => {
+    withState({ rosters: { s1: [ME] } })
+    await renderSquad()
+    await userEvent.click(await screen.findByRole('button', { name: /rename/i }))
+    expect(screen.getByLabelText(/squad name/i)).toHaveValue('The Test Squad')
+  })
+
+  it('saves through the RPC', async () => {
+    withState({ rosters: { s1: [ME] } })
+    await renderSquad()
+    await userEvent.click(await screen.findByRole('button', { name: /rename/i }))
+
+    const field = screen.getByLabelText(/squad name/i)
+    await userEvent.clear(field)
+    await userEvent.type(field, 'Los Fuertes')
+    await userEvent.click(screen.getByRole('button', { name: /save name/i }))
+
+    await waitFor(() =>
+      expect(rpc).toHaveBeenCalledWith('rename_squad', { sid: 's1', new_name: 'Los Fuertes' }))
+  })
+
+  it('trims, and will not save an empty name', async () => {
+    withState({ rosters: { s1: [ME] } })
+    await renderSquad()
+    await userEvent.click(await screen.findByRole('button', { name: /rename/i }))
+
+    const field = screen.getByLabelText(/squad name/i)
+    await userEvent.clear(field)
+    expect(screen.getByRole('button', { name: /save name/i })).toBeDisabled()
+
+    await userEvent.type(field, '  Los Fuertes  ')
+    await userEvent.click(screen.getByRole('button', { name: /save name/i }))
+    await waitFor(() =>
+      expect(rpc).toHaveBeenCalledWith('rename_squad', { sid: 's1', new_name: 'Los Fuertes' }))
+  })
+
+  it('shows the new name once it is saved', async () => {
+    rpc.mockImplementation((fn) => {
+      if (fn === 'my_squads') {
+        const renamed = rpc.mock.calls.some((c) => c[0] === 'rename_squad')
+        return Promise.resolve({ data: [{ ...SQUAD, name: renamed ? 'Los Fuertes' : 'The Test Squad' }], error: null })
+      }
+      if (fn === 'squad_roster') return Promise.resolve({ data: [ME], error: null })
+      return Promise.resolve({ data: null, error: null })
+    })
+    await renderSquad()
+    await userEvent.click(await screen.findByRole('button', { name: /rename/i }))
+
+    const field = screen.getByLabelText(/squad name/i)
+    await userEvent.clear(field)
+    await userEvent.type(field, 'Los Fuertes')
+    await userEvent.click(screen.getByRole('button', { name: /save name/i }))
+
+    expect(await screen.findByRole('heading', { name: 'Los Fuertes' })).toBeInTheDocument()
+  })
+
+  it('surfaces the server refusing, rather than appearing to work', async () => {
+    rpc.mockImplementation((fn) => {
+      if (fn === 'my_squads') return Promise.resolve({ data: [SQUAD], error: null })
+      if (fn === 'squad_roster') return Promise.resolve({ data: [ME], error: null })
+      return Promise.resolve({ data: null, error: { message: 'Only the squad owner can rename it.' } })
+    })
+    await renderSquad()
+    await userEvent.click(await screen.findByRole('button', { name: /rename/i }))
+    await userEvent.click(screen.getByRole('button', { name: /save name/i }))
+
+    expect(await screen.findByText(/only the squad owner/i)).toBeInTheDocument()
+  })
+
+  it('closes without saving on Cancel', async () => {
+    withState({ rosters: { s1: [ME] } })
+    await renderSquad()
+    await userEvent.click(await screen.findByRole('button', { name: /rename/i }))
+    await userEvent.click(screen.getByRole('button', { name: /^cancel$/i }))
+
+    expect(screen.queryByLabelText(/squad name/i)).toBeNull()
+    expect(rpc).not.toHaveBeenCalledWith('rename_squad', expect.anything())
+  })
+})

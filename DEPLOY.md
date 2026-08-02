@@ -9,7 +9,7 @@ Total time: about 45 minutes, most of it waiting for DNS.
 
 ## Step 1b. Run the migrations (5 min — do this first)
 
-Eight migrations to run in **SQL Editor → New query**, **in order**.
+Ten migrations to run in **SQL Editor → New query**, **in order**.
 
 > ⚠️ Each file is idempotent on its own, but the ORDER matters and re-running
 > an early one alone is not harmless. `0002` and `0004` both define
@@ -41,8 +41,13 @@ Eight migrations to run in **SQL Editor → New query**, **in order**.
    squad-aware signup trigger, adds a second independently-named trigger so
    a future re-run of `0002` cannot break it again, and backfills everyone
    currently without a squad *using the join code they signed up with*.
+9. `0010_reactions.sql` — the `reactions` table behind the four emoji, the
+   activity feed that tells you when someone leaves one, and `rename_squad()`.
+   Until this ran, tapping a reaction did nothing at all.
+10. `0011_comments.sql` — the `comments` table behind the Comment button,
+    and it widens the activity feed to cover replies as well as reactions.
 
-Confirm all eight:
+Confirm all ten:
 
 ```sql
 select tgname from pg_trigger where tgname = 'on_auth_user_created';
@@ -64,6 +69,12 @@ select to_regprocedure('public.squad_roster(uuid)') as squad_roster;
 --   on_auth_user_created, on_auth_user_created_squad
 select tgname from pg_trigger
 where tgrelid = 'auth.users'::regclass and not tgisinternal;
+
+select to_regclass('public.reactions') as reactions,
+       to_regclass('public.comments')  as comments;
+select to_regprocedure('public.my_activity(int)')   as my_activity,
+       to_regprocedure('public.rename_squad(uuid,text)') as rename_squad,
+       to_regprocedure('public.post_comments(uuid)')     as post_comments;
 ```
 
 ### Who is actually in which squad
@@ -960,6 +971,7 @@ supabase functions deploy resolve-link
 | Short link posts but shows a tap-through card | `resolve-link` not deployed, or TikTok refused | `supabase functions deploy resolve-link`, then check the curl below. The post is never lost over this. |
 | Worker → Domains → Add → Custom domain says *No zones found* | `inkaitech.com` is not a Cloudflare zone — its nameservers still point at Hostinger (`ns*.dns-parking.com`) | Add the domain to Cloudflare and move the nameservers. Custom Domains need an active zone on the same account; partial/CNAME setup is not supported for them. Full walkthrough in §6.8. |
 | Email stops arriving after moving nameservers | The `MX` / `SPF` / `DKIM` / `DMARC` records did not come across in Cloudflare's import | Re-add them in Cloudflare DNS from the screenshot you took in §6.8 step 1. Mail routing is DNS; moving nameservers moves it. |
+| Tapping a reaction or Comment does nothing | Migrations `0010` / `0011` not run — the `reactions` / `comments` tables are missing | Run them. The card now says so in place rather than only in the console. |
 | **Failed to send a request to the Edge Function** when generating a plan | Almost always CORS: this site's origin is missing from `ALLOWED_ORIGINS`, so the browser discarded the response. Also matches a genuinely unreachable function | Check the list, then prove it with the curl below. The app now names the origin that needs adding in the error itself. |
 | Someone signed up with a join code and is in NO squad at all — not yours, not their own | `handle_new_user()` was reverted to the 0002 version by a re-run, so the trigger stopped resolving join codes. Silent: signup still succeeds | Run `0009_signup_squad_fix.sql`. It restores the trigger, adds a second one that a re-run of 0002 cannot remove, and backfills the affected people into the squad whose code they typed. |
 | Squad-mates joined but nobody can see anybody | The leaderboard used to be built from `posts`/`weigh_ins` only, so members with no logs did not appear — and if nobody had logged in the range, the squad looked empty to everyone in it | Run `0008_squad_roster.sql` and deploy. The board is now built from the roster: everyone appears from the moment they join, on zero. Confirm membership with the query in §1b. |

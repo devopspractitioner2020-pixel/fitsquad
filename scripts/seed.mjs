@@ -163,6 +163,59 @@ async function seedPerson(userId, person) {
   console.log(`  · ${person.name}: ${posts.length} posts, ${weighs.length} weigh-ins`)
 }
 
+const EMOJI = ['🔥', '💪', '👏', '😅']
+const REMARKS = [
+  'Strong work.', 'This looks great.', 'Stealing this recipe.',
+  'Same here on Thursday.', 'Respect.', 'How was the DOMS?',
+]
+
+/**
+ * Reactions and comments across the squad's posts.
+ *
+ * Runs after everyone's posts exist, because both reference post ids. Kept
+ * out of seedPerson for that reason — a reaction inserted before the post it
+ * points at fails the foreign key.
+ */
+async function seedEngagement(ids) {
+  const { data: posts } = await db
+    .from('posts').select('id,user_id').order('created_at', { ascending: false }).limit(60)
+  if (!posts?.length) return
+
+  const userIds = Object.values(ids)
+  const reactions = []
+  const comments = []
+
+  for (const post of posts) {
+    for (const uid of userIds) {
+      // Nobody reacts to their own post — my_activity filters those out, so
+      // seeding them would just be noise nobody ever sees.
+      if (uid === post.user_id) continue
+      if (rnd() < 0.35) {
+        reactions.push({ post_id: post.id, user_id: uid, emoji: pick(EMOJI) })
+      }
+      if (rnd() < 0.12) {
+        comments.push({ post_id: post.id, user_id: uid, body: pick(REMARKS) })
+      }
+    }
+  }
+
+  // Dedupe on the primary key: two passes could pick the same emoji twice.
+  const seen = new Set()
+  const unique = reactions.filter((r) => {
+    const key = `${r.post_id}:${r.user_id}:${r.emoji}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+
+  const { error: rErr } = await db.from('reactions').insert(unique)
+  if (rErr) throw new Error(`reactions: ${rErr.message} — has 0010 been run?`)
+  const { error: cErr } = await db.from('comments').insert(comments)
+  if (cErr) throw new Error(`comments: ${cErr.message} — has 0011 been run?`)
+
+  console.log(`  · ${unique.length} reactions, ${comments.length} comments`)
+}
+
 /** A finished plan for the test user, in the structured shape the app renders. */
 function demoPlan(name) {
   const meals = [
@@ -251,6 +304,10 @@ async function main() {
       .filter((u) => PEOPLE.some((p) => p.email === u.email))
       .map((u) => u.id)
     for (const id of ids) {
+      // Reactions and comments cascade with the post, but a seeded user's
+      // reactions on ANOTHER user's post do not — delete those explicitly.
+      await db.from('reactions').delete().eq('user_id', id)
+      await db.from('comments').delete().eq('user_id', id)
       await db.from('posts').delete().eq('user_id', id)
       await db.from('weigh_ins').delete().eq('user_id', id)
       await db.from('plans').delete().eq('user_id', id)
@@ -293,6 +350,7 @@ async function main() {
 
   console.log('\nHistory:')
   for (const p of PEOPLE) await seedPerson(ids[p.email], p)
+  await seedEngagement(ids)
 
   console.log('\nFitPlan:')
   await db.from('plans').delete().eq('user_id', hostId)

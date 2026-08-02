@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import { Header } from '../components/ui'
+import { useUnseenActivity } from '../lib/useUnseenActivity'
 
 // Matches the name the signup trigger gives a squad in migration 0004, so a
 // squad created here and one created at signup are indistinguishable.
@@ -24,6 +26,8 @@ const defaultSquadName = (displayName) => `${displayName?.trim() || 'My'}'s Squa
 // does not decide who is on it.
 export default function Squad() {
   const { user, profile, signOut } = useAuth()
+  const nav = useNavigate()
+  const { unseen } = useUnseenActivity(user?.id)
   const [range, setRange] = useState('week') // week | all
   const [rows, setRows] = useState([])
   const [squads, setSquads] = useState([])
@@ -33,6 +37,8 @@ export default function Squad() {
   const [showJoin, setShowJoin] = useState(false)
   const [code, setCode] = useState('')
   const [newName, setNewName] = useState('')
+  const [renaming, setRenaming] = useState(false)
+  const [renameTo, setRenameTo] = useState('')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const [copied, setCopied] = useState('')
@@ -160,6 +166,26 @@ export default function Squad() {
     }
   }
 
+  // Renaming has been possible in the database since 0004 — there is an
+  // "owner renames squad" RLS policy — but no screen ever offered it, so the
+  // name your squad was born with was the name it kept. Owners only: a member
+  // renaming the squad out from under everyone is not a feature.
+  async function renameSquad() {
+    const name = renameTo.trim()
+    if (!name) { setErr('Give your squad a name.'); return }
+    setErr(''); setBusy(true)
+    try {
+      const { error } = await supabase.rpc('rename_squad', { sid: squad.id, new_name: name })
+      if (error) throw error
+      setRenaming(false)
+      await loadSquads()
+    } catch (e) {
+      setErr(e?.message || 'Could not rename the squad.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   async function joinSquad() {
     setErr(''); setBusy(true)
     try {
@@ -178,10 +204,45 @@ export default function Squad() {
 
   return (
     <div className="app-shell">
-      <Header onSignOut={signOut} />
+      <Header onSignOut={signOut} onActivity={() => nav('/activity')} unseen={unseen} />
       <div className="px-5">
         <p className="text-muted uppercase tracking-[0.14em] text-[13px] mt-2">The squad</p>
-        <h1 className="font-display text-[42px] font-800 mb-1">{squad?.name ?? 'Leaderboard'}</h1>
+        <div className="flex items-baseline gap-3 mb-1">
+          <h1 className="font-display text-[42px] font-800 leading-tight">{squad?.name ?? 'Leaderboard'}</h1>
+          {squad?.role === 'owner' && !renaming && (
+            <button
+              onClick={() => { setRenameTo(squad.name); setRenaming(true); setErr('') }}
+              className="text-muted text-sm underline decoration-line underline-offset-4"
+            >
+              Rename
+            </button>
+          )}
+        </div>
+
+        {renaming && (
+          <div className="bg-card border border-line rounded-xl2 p-4 mb-4">
+            <label className="block">
+              <span className="label">Squad name</span>
+              <input
+                className="input"
+                value={renameTo}
+                onChange={(e) => setRenameTo(e.target.value)}
+                maxLength={60}
+                autoFocus
+              />
+            </label>
+            <div className="flex gap-3 mt-3">
+              <button className="btn-ghost flex-1" onClick={() => { setRenaming(false); setErr('') }}>Cancel</button>
+              <button
+                className="btn-primary flex-1 flex items-center justify-center gap-2"
+                onClick={renameSquad}
+                disabled={busy || !renameTo.trim()}
+              >
+                {busy ? <><span className="spinner" /> Saving…</> : 'Save name'}
+              </button>
+            </div>
+          </div>
+        )}
         <p className="text-muted mb-5">Ranked by healthy meals + workouts logged.</p>
 
         {/* More than one squad, so say which one you are looking at and let

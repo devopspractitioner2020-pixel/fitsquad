@@ -1,14 +1,26 @@
 import { useState } from 'react'
 import VideoEmbed from './VideoEmbed'
 import { SAVEABLE_KINDS, setSaved, describeSaveError } from '../lib/saved'
+import { REACTIONS, setReaction, describeReactionError } from '../lib/reactions'
+import {
+  getComments, addComment, deleteComment, describeCommentError, MAX_COMMENT_CHARS,
+} from '../lib/comments'
+
 
 // One post, used by both the feed and the saved lists. It lived inside
 // Feed.jsx until saving needed the same card in two places — duplicating it
 // would have meant every future tweak had to be made twice.
 
-const REACTIONS = ['🔥', '💪', '👏', '😅']
-
-export default function PostCard({ post, userId, saved = false, onSavedChange }) {
+export default function PostCard({
+  post,
+  userId,
+  saved = false,
+  onSavedChange,
+  reactions,
+  onReactionChange,
+  commentCount = 0,
+  onCommentCountChange,
+}) {
   const [saveError, setSaveError] = useState('')
   const when = timeAgo(post.created_at)
   const kindLabel = post.kind === 'workout' ? 'Strength' : post.kind === 'meal' ? 'Healthy Meal' : 'Tip'
@@ -59,13 +71,231 @@ export default function PostCard({ post, userId, saved = false, onSavedChange })
 
       {post.video_url && <VideoEmbed url={post.video_url} />}
 
-      <div className="flex items-center gap-2 mt-3">
-        {REACTIONS.map((r) => (
-          <button key={r} className="w-11 h-9 rounded-full border border-line grid place-items-center text-[16px] active:bg-card-2">{r}</button>
-        ))}
-        <button className="ml-auto text-muted">Comment</button>
-      </div>
+      <Reactions
+        post={post}
+        userId={userId}
+        reactions={reactions}
+        onReactionChange={onReactionChange}
+        commentCount={commentCount}
+        onCommentCountChange={onCommentCountChange}
+      />
     </div>
+  )
+}
+
+/**
+ * The comment thread, opened on demand.
+ *
+ * Collapsed by default and fetched only when opened: the feed shows a count,
+ * which is one small query for every card, rather than every comment on every
+ * post before anything renders.
+ */
+function Comments({ post, userId, count, onCountChange }) {
+  const [open, setOpen] = useState(false)
+  const [items, setItems] = useState(null) // null = not loaded yet
+  const [draft, setDraft] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+
+  async function toggle() {
+    const next = !open
+    setOpen(next)
+    if (!next || items !== null) return
+    try {
+      setItems(await getComments(post.id))
+    } catch (e) {
+      setErr(describeCommentError(e))
+      setItems([])
+    }
+  }
+
+  async function submit() {
+    const text = draft.trim()
+    if (!text) return
+    setErr(''); setBusy(true)
+    try {
+      await addComment(userId, post.id, text)
+      setDraft('')
+      const fresh = await getComments(post.id)
+      setItems(fresh)
+      onCountChange?.(post.id, fresh.length)
+    } catch (e) {
+      // The draft is deliberately NOT cleared on failure — losing what
+      // someone just typed because the network blinked is unforgivable.
+      setErr(describeCommentError(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function remove(id) {
+    setErr('')
+    const previous = items
+    setItems((prev) => prev.filter((c) => c.id !== id))
+    onCountChange?.(post.id, Math.max(0, (previous?.length ?? 1) - 1))
+    try {
+      await deleteComment(id)
+    } catch (e) {
+      setItems(previous)
+      onCountChange?.(post.id, previous.length)
+      setErr(describeCommentError(e))
+    }
+  }
+
+  return (
+    <div className="mt-3">
+      <button
+        onClick={toggle}
+        aria-expanded={open}
+        className="text-muted text-sm"
+      >
+        {count > 0
+          ? `${open ? 'Hide' : 'Show'} ${count} comment${count === 1 ? '' : 's'}`
+          : 'Add a comment'}
+      </button>
+
+      {open && (
+        <div className="mt-3 space-y-3">
+          {items === null && <p className="text-muted-2 text-sm">Loading…</p>}
+
+          {items?.map((c) => (
+            <div key={c.id} className="bg-panel/60 border border-line rounded-2xl p-3">
+              <div className="flex items-baseline gap-2">
+                <span className="font-display font-700 text-[15px]">{c.author_name}</span>
+                <span className="text-muted-2 text-[12px]">{timeAgo(c.created_at)}</span>
+                {c.is_mine && (
+                  <button
+                    onClick={() => remove(c.id)}
+                    className="ml-auto text-muted-2 text-[12px] underline"
+                    aria-label={`Delete your comment: ${c.body}`}
+                  >
+                    Delete
+                  </button>
+                )}
+              </div>
+              <p className="text-cream text-sm mt-1 whitespace-pre-line break-words">{c.body}</p>
+            </div>
+          ))}
+
+          {items?.length === 0 && (
+            <p className="text-muted-2 text-sm">No comments yet. Say something.</p>
+          )}
+
+          {userId ? (
+            <div>
+              <label className="block">
+                <span className="sr-only">Your comment</span>
+                <textarea
+                  className="input min-h-[64px] resize-none text-sm"
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  maxLength={MAX_COMMENT_CHARS}
+                  placeholder="Add a comment…"
+                  aria-label="Your comment"
+                />
+              </label>
+              <div className="flex items-center gap-3 mt-2">
+                <span className="text-muted-2 text-[12px]">
+                  {draft.length}/{MAX_COMMENT_CHARS}
+                </span>
+                <button
+                  className="btn-primary ml-auto px-5 py-2 text-sm flex items-center gap-2"
+                  onClick={submit}
+                  disabled={busy || !draft.trim()}
+                >
+                  {busy ? <><span className="spinner" /> Posting…</> : 'Post'}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <p className="text-muted-2 text-sm">Sign in to comment.</p>
+          )}
+
+          {err && <p className="text-[#ffd479] text-sm" role="status">{err}</p>}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * The four emoji, wired up at last.
+ *
+ * Optimistic like the bookmark, and for the same reason: a reaction is a
+ * throwaway gesture, and making someone watch a spinner for one turns it
+ * into a decision. The count moves immediately and rolls back if the write
+ * fails — with a message, because a silently reverting count is exactly what
+ * "I tapped fire and nothing happened" looked like.
+ */
+function Reactions({ post, userId, reactions, onReactionChange, commentCount, onCommentCountChange }) {
+  const [err, setErr] = useState('')
+  // Overrides applied on top of the parent's data while a write is in
+  // flight, keyed by emoji: true = just added, false = just removed.
+  const [pending, setPending] = useState({})
+
+  const counts = reactions?.counts ?? {}
+  const mine = reactions?.mine ?? new Set()
+
+  const isOn = (emoji) => pending[emoji] ?? mine.has(emoji)
+
+  // The parent's count still reflects the state before the tap, so the
+  // optimistic count is the stored one plus the difference my own pending
+  // change makes to it — +1, -1, or nothing.
+  const countOf = (emoji) => {
+    const was = mine.has(emoji)
+    const now = isOn(emoji)
+    return Math.max(0, (counts[emoji] ?? 0) + ((now ? 1 : 0) - (was ? 1 : 0)))
+  }
+
+  async function toggle(emoji) {
+    if (!userId) { setErr('Sign in to react.'); return }
+    const next = !isOn(emoji)
+    setErr('')
+    setPending((p) => ({ ...p, [emoji]: next }))
+    try {
+      await setReaction(userId, post.id, emoji, next)
+      onReactionChange?.(post.id, emoji, next)
+      // The parent is authoritative again.
+      setPending((p) => { const { [emoji]: _drop, ...rest } = p; return rest })
+    } catch (e) {
+      setPending((p) => { const { [emoji]: _drop, ...rest } = p; return rest })
+      setErr(describeReactionError(e))
+    }
+  }
+
+  return (
+    <>
+      <div className="flex items-center gap-2 mt-3 flex-wrap">
+        {REACTIONS.map((emoji) => {
+          const on = isOn(emoji)
+          const n = countOf(emoji)
+          return (
+            <button
+              key={emoji}
+              onClick={() => toggle(emoji)}
+              aria-pressed={on}
+              aria-label={`${on ? 'Remove' : 'Add'} ${emoji} reaction${n ? `, ${n} so far` : ''}`}
+              className={`h-9 min-w-11 px-3 rounded-full border flex items-center justify-center gap-1.5 text-[16px] transition-colors ${
+                on ? 'border-mint/50 bg-mint/[0.12]' : 'border-line active:bg-card-2'
+              }`}
+            >
+              <span aria-hidden="true">{emoji}</span>
+              {n > 0 && (
+                <span className={`text-[13px] font-700 ${on ? 'text-mint' : 'text-muted'}`}>{n}</span>
+              )}
+            </button>
+          )
+        })}
+      </div>
+      {err && <p className="text-[#ffd479] text-sm mt-2" role="status">{err}</p>}
+
+      <Comments
+        post={post}
+        userId={userId}
+        count={commentCount}
+        onCountChange={onCommentCountChange}
+      />
+    </>
   )
 }
 

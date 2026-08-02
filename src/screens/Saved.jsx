@@ -4,6 +4,8 @@ import { useAuth } from '../context/AuthContext'
 import { Header } from '../components/ui'
 import PostCard from '../components/PostCard'
 import { getSavedPosts, setSaved, SLUG_TO_KIND, KIND_LABEL } from '../lib/saved'
+import { getReactions } from '../lib/reactions'
+import { getCommentCounts } from '../lib/comments'
 
 // One list of saved posts, of one kind. Reached from the two boxes on Me.
 export default function Saved() {
@@ -13,6 +15,8 @@ export default function Saved() {
   const kind = SLUG_TO_KIND[slug]
 
   const [posts, setPosts] = useState(null) // null = still loading
+  const [reactions, setReactions] = useState(() => new Map())
+  const [commentCounts, setCommentCounts] = useState(() => new Map())
   const [err, setErr] = useState('')
 
   useEffect(() => {
@@ -22,6 +26,13 @@ export default function Saved() {
       try {
         const rows = await getSavedPosts(user.id, kind)
         if (!cancelled) setPosts(rows)
+        // Same card, same counts as the feed — a saved post showing no
+        // reactions while the feed shows three reads as a bug.
+        try {
+          const ids = rows.map((x) => x.id)
+          const [r, c] = await Promise.all([getReactions(ids, user.id), getCommentCounts(ids)])
+          if (!cancelled) { setReactions(r); setCommentCounts(c) }
+        } catch { /* decoration; the list matters more */ }
       } catch (e) {
         if (!cancelled) { setErr(e?.message || 'Could not load your saved items.'); setPosts([]) }
       }
@@ -94,6 +105,8 @@ export default function Saved() {
                   userId={user?.id}
                   saved
                   onSavedChange={onSavedChange}
+                  reactions={reactions.get(p.id)}
+                  commentCount={commentCounts.get(p.id) ?? 0}
                 />
               ))}
             </div>
