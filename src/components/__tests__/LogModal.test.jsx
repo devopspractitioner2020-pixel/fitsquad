@@ -340,23 +340,42 @@ describe('attaching a video to a tip', () => {
 // camera" — it means the camera is the ONLY source, so the phone skipped its
 // own picker and opened the lens. A meal photographed ten minutes earlier
 // could not be posted at all.
+// Neither a single input CAN offer both: `capture` is a statement about the
+// only source, not a preference. With it, the gallery was unreachable;
+// without it, Android went straight to the photo picker and the camera was
+// unreachable. Two inputs, and the person picks.
 describe('choosing a photo', () => {
-  const fileInput = () => document.querySelector('input[type="file"]')
   const openType = async (label) => { setup(); await pick(label) }
+  const camera = () => screen.getByLabelText('Take a photo')
+  const gallery = () => screen.getByLabelText('Choose from gallery')
 
-  it('does not force the camera', async () => {
+  it('offers the camera and the gallery as separate choices', async () => {
     await openType('meal')
-    expect(fileInput()).not.toHaveAttribute('capture')
+    expect(camera()).toBeInTheDocument()
+    expect(gallery()).toBeInTheDocument()
   })
 
-  it('still accepts images only, so the picker is not a file browser', async () => {
+  it('opens the camera from the camera one', async () => {
     await openType('meal')
-    expect(fileInput()).toHaveAttribute('accept', 'image/*')
+    expect(camera()).toHaveAttribute('capture', 'environment')
   })
 
-  it('offers the same choice on a workout', async () => {
+  // The whole point: no capture attribute, so the OS offers the library.
+  it('leaves the gallery one free to show the library', async () => {
+    await openType('meal')
+    expect(gallery()).not.toHaveAttribute('capture')
+  })
+
+  it('accepts images only on both, so neither is a file browser', async () => {
+    await openType('meal')
+    expect(camera()).toHaveAttribute('accept', 'image/*')
+    expect(gallery()).toHaveAttribute('accept', 'image/*')
+  })
+
+  it('offers both on a workout too', async () => {
     await openType('workout')
-    expect(fileInput()).not.toHaveAttribute('capture')
+    expect(camera()).toBeInTheDocument()
+    expect(gallery()).toBeInTheDocument()
   })
 })
 

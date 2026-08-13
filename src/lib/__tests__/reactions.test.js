@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 
 const rpc = vi.fn()
 const from = vi.fn()
@@ -24,14 +26,28 @@ function table({ rows = [], error = null } = {}) {
 beforeEach(() => { rpc.mockReset(); from.mockReset() })
 
 describe('the reaction set', () => {
-  // Mirrors the CHECK constraint in migration 0010. If these drift, every
-  // write fails at the database with a constraint violation.
-  it('is exactly the four emoji the database accepts', () => {
-    expect(REACTIONS).toEqual(['🔥', '💪', '👏', '😅'])
+  // Mirrors the CHECK constraint — 0010 created it with four, 0014 widened
+  // it to five. If these drift, every write fails at the database with a
+  // constraint violation.
+  it('is exactly the emoji the database accepts', () => {
+    expect(REACTIONS).toEqual(['🔥', '💪', '👏', '😅', '🤤'])
+  })
+
+  it('matches the CHECK constraint in the migration that last set it', () => {
+    const sql = readFileSync(
+      resolve(__dirname, '../../../supabase/migrations/0014_recap_variety.sql'),
+      'utf8',
+    )
+    const allowed = sql
+      .match(/emoji in \(([^)]+)\)/)[1]
+      .match(/'([^']+)'/g)
+      .map((x) => x.replace(/'/g, ''))
+    expect(allowed).toEqual(REACTIONS)
   })
 
   it('recognises its own members and nothing else', () => {
     for (const r of REACTIONS) expect(isReaction(r)).toBe(true)
+    expect(isReaction('🤤')).toBe(true)
     expect(isReaction('🍕')).toBe(false)
     expect(isReaction('')).toBe(false)
     expect(isReaction(undefined)).toBe(false)
@@ -112,7 +128,7 @@ describe('setReaction', () => {
   })
 
   it('refuses an emoji the database would reject anyway', async () => {
-    await expect(setReaction('u1', 'p1', '🍕', true)).rejects.toThrow(/not one of the four/i)
+    await expect(setReaction('u1', 'p1', '🍕', true)).rejects.toThrow(/not one of the reactions/i)
     expect(from).not.toHaveBeenCalled()
   })
 
@@ -137,7 +153,7 @@ describe('describeReactionError', () => {
   })
 
   it('explains a check-constraint violation in the app\'s own terms', () => {
-    expect(describeReactionError({ code: '23514' })).toMatch(/not one of the four/i)
+    expect(describeReactionError({ code: '23514' })).toMatch(/not one of the reactions/i)
   })
 
   it('explains an RLS rejection as a squad boundary', () => {

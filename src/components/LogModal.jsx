@@ -22,20 +22,40 @@ function PhotoField({ file, setFile }) {
           >×</button>
         </div>
       ) : (
-        <label className="flex items-center justify-center gap-2 h-24 rounded-2xl border border-dashed border-line text-muted cursor-pointer">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#7C938C" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3Z"/><circle cx="12" cy="13" r="3.5"/></svg>
-          Take or choose a photo
-          {/*
-            NO `capture` attribute. It used to be `capture="environment"`,
-            which does not mean "prefer the camera" — it means "the camera is
-            the only source". The phone skipped the picker entirely and opened
-            the lens, so a meal photographed ten minutes ago could not be
-            posted at all. Without it the OS shows its own sheet, where the
-            camera is one option alongside the library.
-          */}
-          <input type="file" accept="image/*" className="hidden"
-                 onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
-        </label>
+        /*
+          TWO buttons, not one input.
+          
+          The first version forced the camera with capture="environment" —
+          the gallery was unreachable. Dropping the attribute made the
+          gallery reachable but handed the decision to the browser, and
+          Android went straight to the photo picker with no way to shoot one.
+          Neither single input can offer both, because `capture` is a
+          statement about the ONLY source, not a preference.
+          
+          So: one input with capture for the camera, one without for the
+          library, and the person picks. No guessing what the OS will do.
+        */
+        <div className="grid grid-cols-2 gap-3">
+          <label className="flex flex-col items-center justify-center gap-2 h-24 rounded-2xl border border-dashed border-line text-muted cursor-pointer">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#7C938C" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3Z"/><circle cx="12" cy="13" r="3.5"/></svg>
+            <span className="text-sm">Take a photo</span>
+            <input
+              type="file" accept="image/*" capture="environment" className="hidden"
+              aria-label="Take a photo"
+              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+            />
+          </label>
+
+          <label className="flex flex-col items-center justify-center gap-2 h-24 rounded-2xl border border-dashed border-line text-muted cursor-pointer">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#7C938C" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
+            <span className="text-sm">From gallery</span>
+            <input
+              type="file" accept="image/*" className="hidden"
+              aria-label="Choose from gallery"
+              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+            />
+          </label>
+        </div>
       )}
       <p className="text-muted-2 text-[12px] mt-2">Photos are shrunk on your phone before upload to save data.</p>
     </div>

@@ -209,14 +209,34 @@ describe('the rest of the card', () => {
 // worst way for a feature to be missing.
 // ---------------------------------------------------------------------
 describe('reactions', () => {
-  it('offers all four, on every kind of post', () => {
+  it('offers all five, on every kind of post', () => {
     for (const kind of ['tip', 'meal', 'workout']) {
       cleanup()
       render(<PostCard post={post({ kind })} userId="u1" />)
-      for (const emoji of ['🔥', '💪', '👏', '😅']) {
+      for (const emoji of ['🔥', '💪', '👏', '😅', '🤤']) {
         expect(screen.getByRole('button', { name: new RegExp(`${emoji} reaction`) })).toBeInTheDocument()
       }
     }
+  })
+
+  // Added in 0014, for the food — which is most of what gets posted and
+  // which the other four had no good answer to.
+  it('writes the drool one like any other', async () => {
+    render(<PostCard post={post({ kind: 'meal' })} userId="u1" />)
+    await userEvent.click(screen.getByRole('button', { name: /🤤 reaction/ }))
+    await waitFor(() => expect(setReaction).toHaveBeenCalledWith('u1', 'p1', '🤤', true))
+  })
+
+  it('counts it separately from the others', () => {
+    render(
+      <PostCard
+        post={post({ kind: 'meal' })} userId="u1"
+        reactions={{ counts: { '🤤': 3, '🔥': 1 }, mine: new Set(['🤤']) }}
+      />,
+    )
+    expect(screen.getByRole('button', { name: /🤤 reaction/ })).toHaveTextContent('3')
+    expect(screen.getByRole('button', { name: /🤤 reaction/ })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: /🔥 reaction/ })).toHaveAttribute('aria-pressed', 'false')
   })
 
   it('writes the reaction and tells the parent', async () => {

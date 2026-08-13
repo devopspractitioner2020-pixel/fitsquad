@@ -6,7 +6,10 @@ import { supabase } from './supabase'
 // `<button>` elements with no handler and no table behind them. Tapping one
 // did nothing and said nothing, which is worse than not having them.
 
-export const REACTIONS = ['🔥', '💪', '👏', '😅']
+// Must match the CHECK constraint on reactions.emoji — 0010 created it with
+// four, 0014 widened it to five. 🤤 is for the food, which is most of what
+// gets posted and which the other four had no good answer to.
+export const REACTIONS = ['🔥', '💪', '👏', '😅', '🤤']
 
 // Matches the CHECK constraint in migration 0010. Sending anything else is a
 // database error, so it is worth refusing locally with a sentence a person
@@ -54,7 +57,7 @@ export async function getReactions(postIds, userId) {
  */
 export async function setReaction(userId, postId, emoji, on) {
   if (!userId) throw new Error('Sign in to react.')
-  if (!isReaction(emoji)) throw new Error('That reaction is not one of the four.')
+  if (!isReaction(emoji)) throw new Error('That is not one of the reactions.')
 
   if (on) {
     const { error } = await supabase
@@ -84,7 +87,7 @@ export function describeReactionError(error) {
     return 'Reactions are not set up on this project yet — the reactions table is missing.'
   }
   if (code === '23514' || /violates check constraint/i.test(message)) {
-    return 'That reaction is not one of the four.'
+    return 'That is not one of the reactions.'
   }
   if (code === '42501' || /row-level security/i.test(message)) {
     return 'You can only react to posts from your own squad.'

@@ -1,4 +1,5 @@
 import { supabase } from './supabase'
+import { WORKOUT_TYPES } from './postLabels'
 
 // The weekly recap: one squad's week, as a set of story cards.
 //
@@ -60,6 +61,12 @@ export async function getRecap(squadId, key) {
 
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`
 
+// Derived from the same list the log sheet and the card use, rather than a
+// second copy that could drift. A type the client does not recognise falls
+// back below rather than rendering `undefined`.
+const WORKOUT_LABEL = Object.fromEntries(WORKOUT_TYPES.map((t) => [t.value, t.label]))
+const WORKOUT_EMOJI = Object.fromEntries(WORKOUT_TYPES.map((t) => [t.value, t.icon]))
+
 /**
  * Did anything actually happen this week?
  *
@@ -86,6 +93,24 @@ export function buildStories(recap) {
   if (!recap) return []
   const t = recap.totals ?? {}
   const cards = []
+  const seen = new Set()
+
+  // Guards against the same post appearing twice under two headings. The SQL
+  // already excludes the overall winner from the per-kind picks, but a client
+  // reading an older response would not have that.
+  const postCard = (post, { id, eyebrow, emoji }) => {
+    if (!post || seen.has(post.id)) return null
+    seen.add(post.id)
+    return {
+      id,
+      kind: 'post',
+      eyebrow,
+      emoji: post.photo_url ? null : emoji,
+      title: post.title,
+      subtitle: `${post.author} · ${plural(post.reactions ?? 0, 'reaction')}`,
+      photo: post.photo_url ?? null,
+    }
+  }
 
   cards.push({
     id: 'cover',
@@ -112,6 +137,26 @@ export function buildStories(recap) {
     ],
   })
 
+  // In the gym. The old recap never said a word about training beyond a
+  // count in the totals grid.
+  const tr = recap.training
+  if (tr?.sessions > 0) {
+    const hours = Math.round((tr.minutes ?? 0) / 6) / 10
+    cards.push({
+      id: 'training',
+      kind: 'stats',
+      eyebrow: 'In the gym',
+      title: plural(tr.sessions, 'session'),
+      subtitle: tr.minutes > 0
+        ? `${hours} hours of training between ${plural(tr.people ?? 0, 'person', 'people')}`
+        : `between ${plural(tr.people ?? 0, 'person', 'people')}`,
+      emoji: WORKOUT_EMOJI[tr.top_type] ?? '🏋️',
+      stats: tr.top_type
+        ? [{ label: 'Most common', value: WORKOUT_LABEL[tr.top_type] ?? tr.top_type }]
+        : [],
+    })
+  }
+
   if (recap.top_logger?.logs > 0) {
     cards.push({
       id: 'top-logger',
@@ -136,16 +181,24 @@ export function buildStories(recap) {
     })
   }
 
-  for (const post of recap.top_posts ?? []) {
-    cards.push({
-      id: `post-${post.id}`,
-      kind: 'post',
-      eyebrow: 'Most loved',
-      title: post.title,
-      subtitle: `${post.author} · ${plural(post.reactions, 'reaction')}`,
-      photo: post.photo_url ?? null,
-    })
+  // ONE superlative. "Most loved" three times over was three cards claiming
+  // to be the top one; the cards after it are about different things.
+  const picks = [
+    postCard(recap.top_post, { id: 'top-post', eyebrow: 'Most loved', emoji: '❤️‍🔥' }),
+    postCard(recap.top_workout, { id: 'top-workout', eyebrow: 'Session of the week', emoji: '🏋️' }),
+    postCard(recap.top_meal, { id: 'top-meal', eyebrow: 'Best plate', emoji: '🍽️' }),
+    postCard(recap.top_tip, { id: 'top-tip', eyebrow: 'Tip worth keeping', emoji: '✨' }),
+  ].filter(Boolean)
+
+  // Falls back to the old shape so a response from before migration 0014
+  // still produces a story rather than a gap.
+  if (!picks.length) {
+    for (const post of recap.top_posts ?? []) {
+      const card = postCard(post, { id: `post-${post.id}`, eyebrow: 'Most loved', emoji: '❤️‍🔥' })
+      if (card) picks.push(card)
+    }
   }
+  cards.push(...picks)
 
   if ((t.reactions ?? 0) + (t.comments ?? 0) > 0) {
     cards.push({

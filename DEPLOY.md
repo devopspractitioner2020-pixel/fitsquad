@@ -9,7 +9,7 @@ Total time: about 45 minutes, most of it waiting for DNS.
 
 ## Step 1b. Run the migrations (5 min — do this first)
 
-Twelve migrations to run in **SQL Editor → New query**, **in order**.
+Thirteen migrations to run in **SQL Editor → New query**, **in order**.
 
 > ⚠️ Each file is idempotent on its own, but the ORDER matters and re-running
 > an early one alone is not harmless. `0002` and `0004` both define
@@ -54,8 +54,12 @@ Twelve migrations to run in **SQL Editor → New query**, **in order**.
     claimed to be "Strength" and a cheat meal announced itself as a "Healthy
     Meal". Deliberately **not** backfilled: those old workouts were never
     categorised by anyone, so they now read as a plain "Workout".
+13. `0014_recap_variety.sql` — widens the reaction set to five (adds 🤤) and
+    rewrites `squad_recap()` to return the best post of each KIND plus what
+    the squad trained. The old one returned the top three overall, so the
+    story played three cards all captioned "Most loved".
 
-Confirm all twelve:
+Confirm all thirteen:
 
 ```sql
 select tgname from pg_trigger where tgname = 'on_auth_user_created';
@@ -91,6 +95,11 @@ where polrelid = 'public.posts'::regclass and polcmd = 'w';
 
 select column_name from information_schema.columns
  where table_name = 'posts' and column_name in ('workout_type', 'meal_tags');
+
+-- The reaction set must include 🤤, and the recap must return the per-kind
+-- picks. Both come from 0014.
+select pg_get_constraintdef(oid) as reactions_emoji_check
+from pg_constraint where conname = 'reactions_emoji_check';
 ```
 
 ### The weekly recap, and why there is no cron job

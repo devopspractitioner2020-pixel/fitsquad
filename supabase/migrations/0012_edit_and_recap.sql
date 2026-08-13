@@ -65,6 +65,11 @@ as $$
   select ((wk + 6) + time '18:00') at time zone 'UTC';
 $$;
 
+-- NOTE: SUPERSEDED by 0014_recap_variety.sql, which returns the best post of
+-- each KIND instead of the top three overall. `create or replace` means the
+-- last one to run wins, so re-running THIS file on its own reverts the recap
+-- to three cards all captioned "Most loved". If you re-run it, run 0014
+-- afterwards.
 /**
  * One week of a squad, as a JSON object the app renders as stories.
  *

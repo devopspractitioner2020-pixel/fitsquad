@@ -178,7 +178,7 @@ async function seedPerson(userId, person) {
   console.log(`  · ${person.name}: ${posts.length} posts, ${weighs.length} weigh-ins`)
 }
 
-const EMOJI = ['🔥', '💪', '👏', '😅']
+const EMOJI = ['🔥', '💪', '👏', '😅', '🤤']
 const REMARKS = [
   'Strong work.', 'This looks great.', 'Stealing this recipe.',
   'Same here on Thursday.', 'Respect.', 'How was the DOMS?',
