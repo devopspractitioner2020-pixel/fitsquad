@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-// The embed has its own suite; here it would drag in IntersectionObserver.
+// Still mocked, so the "embeds no video" assertion below would actually FAIL
+// if a video ever came back — an unmocked import would throw instead, which
+// is a less useful failure.
 vi.mock('../VideoEmbed', () => ({ default: ({ url }) => <div data-testid="embed">{url}</div> }))
 
 import Stories from '../Stories'
@@ -209,51 +211,37 @@ describe('reactions on a card', () => {
   })
 })
 
-// The card used to render the title alone — "Dinner" for an Instagram video
-// of somebody making dinner.
-describe('a card whose post is a video', () => {
-  const videoCard = [{
-    id: 'p', kind: 'post', eyebrow: 'Tip worth keeping', title: 'Dinner', subtitle: 'Kati',
-    video: 'https://www.instagram.com/reel/abc/',
-  }, { id: 'next', kind: 'outro', eyebrow: 'Next', title: 'Done' }]
+// A card with an embedded player used to disable pointer events on the whole
+// tap-zone strip so taps would reach the video — but the Next button lives
+// inside that strip, so the story got stuck with no way forward on a phone.
+// There is no embedded video any more; this pins that nothing is ever inert.
+describe('nothing blocks the way forward', () => {
+  const anyCard = [
+    { id: 'a', kind: 'post', eyebrow: 'Plate of the week', title: 'Ceviche', subtitle: 'Diego',
+      reactions: [{ emoji: '🤤', count: 3 }] },
+    { id: 'b', kind: 'outro', eyebrow: 'Next week', title: 'Done' },
+  ]
 
-  it('embeds the video', () => {
-    render(<Stories cards={videoCard} onClose={vi.fn()} autoplay={false} />)
-    expect(screen.getByTestId('embed')).toHaveTextContent('https://www.instagram.com/reel/abc/')
-  })
-
-  // Five seconds is not enough to watch anything, and pulling a video off
-  // screen mid-play is worse than asking for a tap.
-  it('does not auto-advance past it', async () => {
-    vi.useFakeTimers()
-    render(<Stories cards={videoCard} onClose={vi.fn()} />)
-
-    await act(async () => { vi.advanceTimersByTime(20000) })
-    expect(screen.getByText('Dinner')).toBeInTheDocument()
-  })
-
-  it('says why it is paused', () => {
-    render(<Stories cards={videoCard} onClose={vi.fn()} />)
-    expect(screen.getByText(/paused/i)).toBeInTheDocument()
-  })
-
-  it('still advances by tap and by keyboard', async () => {
-    render(<Stories cards={videoCard} onClose={vi.fn()} autoplay={false} />)
-    await userEvent.keyboard('{ArrowRight}')
+  it('advances by tap on every card', async () => {
+    render(<Stories cards={anyCard} onClose={vi.fn()} autoplay={false} />)
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }))
     expect(screen.getByText('Done')).toBeInTheDocument()
   })
 
-  it('resumes auto-advance on the next card', async () => {
+  it('keeps auto-advance running on every card', async () => {
     vi.useFakeTimers()
-    const onClose = vi.fn()
-    render(<Stories cards={videoCard} onClose={onClose} />)
+    render(<Stories cards={anyCard} onClose={vi.fn()} />)
+    await act(async () => { vi.advanceTimersByTime(5100) })
+    expect(screen.getByText('Done')).toBeInTheDocument()
+  })
 
-    await act(async () => { vi.advanceTimersByTime(10000) })
-    expect(screen.getByText('Dinner')).toBeInTheDocument()
+  it('never shows a paused notice, because nothing pauses on its own', () => {
+    render(<Stories cards={anyCard} onClose={vi.fn()} />)
+    expect(screen.queryByText(/paused/i)).toBeNull()
+  })
 
-    // Move past the video by hand; the outro then times out on its own.
-    await act(async () => { screen.getByRole('button', { name: 'Next' }).click() })
-    await act(async () => { vi.advanceTimersByTime(5200) })
-    expect(onClose).toHaveBeenCalled()
+  it('embeds no video', () => {
+    render(<Stories cards={anyCard} onClose={vi.fn()} autoplay={false} />)
+    expect(screen.queryByTestId('embed')).toBeNull()
   })
 })

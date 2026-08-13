@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import VideoEmbed from './VideoEmbed'
 
 // A full-screen story player, in the shape everyone already knows from
 // Instagram: progress bars along the top, tap the right half to go forward,
@@ -40,11 +39,7 @@ export default function Stories({ cards, onClose, autoplay = true }) {
   // Auto-advance. A ticking interval rather than one long timeout because the
   // progress bar has to fill smoothly and pause has to be able to freeze it
   // mid-card rather than restarting it.
-  //
-  // A card with a video never advances on its own: five seconds is not enough
-  // to watch anything, and yanking a video off screen mid-play is worse than
-  // asking for a tap.
-  const still = autoplay && !paused && !card?.video && !prefersReducedMotion() && count > 0
+  const still = autoplay && !paused && !prefersReducedMotion() && count > 0
   useEffect(() => {
     if (!still) return undefined
     timer.current = setInterval(() => {
@@ -94,12 +89,6 @@ export default function Stories({ cards, onClose, autoplay = true }) {
         ))}
       </div>
 
-      {card.video && (
-        <p className="text-muted-2 text-[12px] text-center pt-2">
-          Paused — tap → when you are done
-        </p>
-      )}
-
       <div className="flex justify-end px-4 pt-3">
         <button
           onClick={onClose}
@@ -126,10 +115,13 @@ export default function Stories({ cards, onClose, autoplay = true }) {
       </p>
 
       {/* Tap zones. Real buttons: keyboard-reachable and announced.
-          `pointer-events-none` on the strip when a video is showing, so taps
-          reach the player instead of skipping the card — the two arrow
-          buttons below stay clickable for navigation. */}
-      <div className={`absolute inset-0 top-16 flex ${card.video ? 'pointer-events-none' : ''}`}>
+      
+          An earlier version disabled pointer events on this strip while an
+          embedded video was showing, so taps would reach the player. The Next
+          button lives INSIDE the strip, so that disabled the only way
+          forward and the story got stuck. There is no embedded video any
+          more, and nothing here is ever inert. */}
+      <div className="absolute inset-0 top-16 flex">
         <button
           className="w-1/3 h-full"
           aria-label="Previous"
@@ -166,14 +158,6 @@ function Card({ card }) {
           alt=""
           className="w-full h-56 object-cover rounded-xl2 border border-line mb-4"
         />
-      )}
-
-      {/* The post WAS the video. Showing its title alone produced cards
-          reading "Dinner" for an Instagram video of somebody making dinner. */}
-      {card.video && (
-        <div className="mb-4 pointer-events-auto">
-          <VideoEmbed url={card.video} />
-        </div>
       )}
 
       <h2 className={`font-display font-800 leading-tight mb-2 ${

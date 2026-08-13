@@ -112,16 +112,12 @@ export function buildStories(recap) {
       id,
       kind: 'post',
       eyebrow,
-      // The emoji is a stand-in for a picture. A card with a photo or a video
-      // has one, so it does not need a symbol as well.
-      emoji: post.photo_url || post.video_url ? null : emoji,
+      // The emoji is a stand-in for a picture, so a card with a photo does
+      // not need one as well.
+      emoji: post.photo_url ? null : emoji,
       title: post.title,
       subtitle: post.author,
       photo: post.photo_url ?? null,
-      // A tip whose whole content is an Instagram video used to render as its
-      // title and nothing else — a card reading "Dinner" for a video of
-      // somebody making dinner. Now the card shows the video.
-      video: post.photo_url ? null : (post.video_url ?? null),
       reactions,
     }
   }
@@ -197,20 +193,30 @@ export function buildStories(recap) {
 
   // One card per KIND, and no overall winner.
   //
-  // The previous version had both, so when the week's top post was a meal —
+  // An earlier version had both, so when the week's top post was a meal —
   // which it usually is, most of what gets posted is food — the story showed
   // two meal cards captioned "Most loved" and "Best plate" and nothing
   // distinguished them. The best meal already IS the most-loved meal.
+  //
+  // NO TIP CARD, deliberately. Tips are mostly TikTok and Instagram links,
+  // and a link has nothing to show in a five-second card: the title alone
+  // produced cards reading "Dinner" for a video of somebody cooking dinner,
+  // and embedding the player instead meant a card you had to stop and watch,
+  // in a format built to keep moving. `top_tip` still comes back from the
+  // database — the Activity feed and any future screen can use it — it just
+  // does not belong in the stories.
   const picks = [
     postCard(recap.top_workout, { id: 'top-workout', eyebrow: 'Session of the week', emoji: '🏋️' }),
     postCard(recap.top_meal, { id: 'top-meal', eyebrow: 'Plate of the week', emoji: '🍽️' }),
-    postCard(recap.top_tip, { id: 'top-tip', eyebrow: 'Tip worth keeping', emoji: '✨' }),
   ].filter(Boolean)
 
   // Falls back to the older shapes so a response from before 0014 or 0015
   // still produces a story rather than a gap.
   if (!picks.length) {
-    const legacy = recap.top_post ? [recap.top_post] : (recap.top_posts ?? [])
+    const legacy = (recap.top_post ? [recap.top_post] : (recap.top_posts ?? []))
+      // Same reasoning as above: a tip is a link, and a link has nothing to
+      // show on a story card.
+      .filter((post) => post.kind !== 'tip')
     for (const post of legacy) {
       const card = postCard(post, { id: `post-${post.id}`, eyebrow: 'Most loved', emoji: '❤️‍🔥' })
       if (card) picks.push(card)

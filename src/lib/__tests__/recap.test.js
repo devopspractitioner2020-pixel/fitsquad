@@ -242,11 +242,10 @@ describe('every story card says something different', () => {
     expect(new Set(all).size).toBe(all.length)
   })
 
-  it('covers training, the plate and a tip as separate cards', () => {
+  it('covers the session and the plate as separate cards', () => {
     const cards = buildStories(recap())
     expect(cards.find((c) => c.id === 'top-workout').eyebrow).toBe('Session of the week')
     expect(cards.find((c) => c.id === 'top-meal').eyebrow).toBe('Plate of the week')
-    expect(cards.find((c) => c.id === 'top-tip').eyebrow).toBe('Tip worth keeping')
   })
 
   it('shows each post once, even if one wins two categories', () => {
@@ -256,10 +255,50 @@ describe('every story card says something different', () => {
   })
 
   it('skips the kinds nobody posted rather than showing an empty card', () => {
-    const ids2 = buildStories(recap({ top_tip: null, top_meal: null })).map((c) => c.id)
+    const ids2 = buildStories(recap({ top_meal: null })).map((c) => c.id)
     expect(ids2).toContain('top-workout')
-    expect(ids2).not.toContain('top-tip')
     expect(ids2).not.toContain('top-meal')
+  })
+})
+
+// Tips are mostly TikTok and Instagram links, and a link has nothing to show
+// in a five-second card: the title alone gave cards reading "Dinner" for a
+// video of somebody cooking, and embedding the player gave a card you had to
+// stop and watch — in a format built to keep moving.
+describe('tips are not story material', () => {
+  it('never builds a tip card, even when there is a good one', () => {
+    const cards = buildStories(recap())
+    expect(cards.map((c) => c.id)).not.toContain('top-tip')
+    expect(cards.map((c) => c.eyebrow)).not.toContain('Tip worth keeping')
+    expect(cards.map((c) => c.title)).not.toContain('Prep on Sunday')
+  })
+
+  it('leaves the rest of the story intact', () => {
+    const ids2 = buildStories(recap()).map((c) => c.id)
+    expect(ids2).toContain('top-workout')
+    expect(ids2).toContain('top-meal')
+    expect(ids2).toContain('training')
+  })
+
+  // The old shape returned a flat list that could contain one.
+  it('filters a tip out of an older response too', () => {
+    const cards = buildStories(recap({
+      top_workout: undefined, top_meal: undefined, top_tip: undefined,
+      top_posts: [
+        { id: 'p9', kind: 'tip', title: 'Dinner', author: 'Kati', reaction_emoji: { '👏': 2 } },
+        { id: 'p8', kind: 'meal', title: 'Ceviche', author: 'Diego', reaction_emoji: { '🤤': 1 } },
+      ],
+    }))
+    expect(cards.map((c) => c.title)).not.toContain('Dinner')
+    expect(cards.map((c) => c.title)).toContain('Ceviche')
+  })
+
+  // No card carries a video any more, so nothing in the player can block on
+  // one loading.
+  it('puts no video on any card', () => {
+    for (const card of buildStories(recap())) {
+      expect(card.video).toBeUndefined()
+    }
   })
 })
 
@@ -294,33 +333,27 @@ describe('the reactions on a post card', () => {
   })
 })
 
-// A tip whose whole content is an Instagram video rendered as its title and
-// nothing else — a card reading "Dinner" for a video of somebody cooking.
-describe('a post that is a video', () => {
-  it('carries the video so the card can embed it', () => {
-    const card = buildStories(recap()).find((c) => c.id === 'top-tip')
-    expect(card.video).toBe('https://www.instagram.com/reel/abc/')
-  })
-
-  it('drops the placeholder emoji, because the video is the picture', () => {
-    const card = buildStories(recap()).find((c) => c.id === 'top-tip')
+describe('the picture on a post card', () => {
+  it('shows a photo when the post has one, and drops the stand-in emoji', () => {
+    const card = buildStories(recap()).find((c) => c.id === 'top-meal')
+    expect(card.photo).toBe('https://x/y.jpg')
     expect(card.emoji).toBeNull()
   })
 
-  it('prefers a photo over a video when a post somehow has both', () => {
-    const card = buildStories(recap({
-      top_tip: { id: 'p4', title: 'x', author: 'a', photo_url: 'https://x/p.jpg', video_url: 'https://x/v' },
-    })).find((c) => c.id === 'top-tip')
-    expect(card.photo).toBe('https://x/p.jpg')
-    expect(card.video).toBeNull()
+  it('falls back to an emoji when there is no photo', () => {
+    const card = buildStories(recap()).find((c) => c.id === 'top-workout')
+    expect(card.photo).toBeNull()
+    expect(card.emoji).toBe('🏋️')
   })
 
-  it('keeps the emoji for a post with neither', () => {
+  // A meal or workout logged with a video and no photo still reads fine: its
+  // title says what it is, which was never true of a tip called "Dinner".
+  it('ignores a video url rather than trying to embed it', () => {
     const card = buildStories(recap({
-      top_tip: { id: 'p4', title: 'Prep on Sunday', author: 'Sam' },
-    })).find((c) => c.id === 'top-tip')
-    expect(card.emoji).toBe('✨')
-    expect(card.video).toBeNull()
+      top_meal: { id: 'p3', title: 'Ceviche', author: 'Diego', video_url: 'https://x/v' },
+    })).find((c) => c.id === 'top-meal')
+    expect(card.video).toBeUndefined()
+    expect(card.emoji).toBe('🍽️')
   })
 })
 
