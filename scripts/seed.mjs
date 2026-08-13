@@ -55,19 +55,34 @@ const PEOPLE = [
   { email: 'sam@example.com', name: 'Sam', start: 72.5, target: 72.0, keen: 0.35 },
 ]
 
+// [title, minutes, workout_type] — the third column is what migration 0013
+// added. Before it, the card called every one of these "Strength", including
+// the football match and the swim.
 const WORKOUTS = [
-  ['Push day', 52], ['Pull day + abs', 48], ['Leg day', 61], ['Full body', 45],
-  ['Football match', 90], ['Morning run', 32], ['Swim', 40], ['Upper body', 55],
+  ['Push day', 52, 'strength'], ['Pull day + abs', 48, 'strength'],
+  ['Leg day', 61, 'strength'], ['Full body', 45, 'strength'],
+  ['Football match', 90, 'sport'], ['Morning run', 32, 'cardio'],
+  ['Swim', 40, 'cardio'], ['Yoga and stretching', 35, 'mobility'],
+  ['Spin class', 45, 'class'],
 ]
 
+// [title, meal_type, healthy, tags]. `healthy` still drives the leaderboard;
+// the tags only describe.
 const MEALS = [
-  ['Grilled chicken salad', 'Lunch', true], ['Lomo saltado, half rice', 'Dinner', true],
-  ['Oats, banana and peanut butter', 'Breakfast', true], ['Ceviche', 'Lunch', true],
-  ['Salmon, potatoes and greens', 'Dinner', true], ['Lentil stew', 'Lunch', true],
-  ['Scrambled eggs on toast', 'Breakfast', true], ['Pasta with tuna', 'Dinner', true],
-  ['Greek salad and bread', 'Lunch', true], ['Chicken wrap', 'Lunch', true],
-  ['Pizza with the lads', 'Dinner', false], ['Burger and fries', 'Dinner', false],
-  ['Birthday cake', 'Snack', false], ['Three beers', 'Snack', false],
+  ['Grilled chicken salad', 'Lunch', true, ['high-protein', 'home-cooked']],
+  ['Lomo saltado, half rice', 'Dinner', true, ['home-cooked']],
+  ['Oats, banana and peanut butter', 'Breakfast', true, ['quick', 'home-cooked']],
+  ['Ceviche', 'Lunch', true, ['high-protein']],
+  ['Salmon, potatoes and greens', 'Dinner', true, ['high-protein', 'home-cooked']],
+  ['Lentil stew', 'Lunch', true, ['veggie', 'home-cooked']],
+  ['Scrambled eggs on toast', 'Breakfast', true, ['quick', 'high-protein']],
+  ['Pasta with tuna', 'Dinner', true, ['quick', 'home-cooked']],
+  ['Greek salad and bread', 'Lunch', true, ['veggie']],
+  ['Chicken wrap', 'Lunch', true, ['quick']],
+  ['Pizza with the lads', 'Dinner', false, ['eating-out']],
+  ['Burger and fries', 'Dinner', false, ['eating-out']],
+  ['Birthday cake', 'Snack', false, []],
+  ['Three beers', 'Snack', false, ['eating-out']],
 ]
 
 const TIPS = [
@@ -127,19 +142,19 @@ async function seedPerson(userId, person) {
 
   for (let d = DAYS; d >= 0; d -= 1) {
     if (rnd() < 0.42 * person.keen) {
-      const [title, minutes] = pick(WORKOUTS)
+      const [title, minutes, workout_type] = pick(WORKOUTS)
       posts.push({
         user_id: userId, author_name: person.name, kind: 'workout',
-        title, minutes, created_at: day(d),
+        title, minutes, workout_type, meal_tags: [], created_at: day(d),
         note: rnd() < 0.3 ? pick(['Felt strong.', 'Tough one.', 'PB on the last set.']) : null,
       })
     }
     if (rnd() < 0.55 * person.keen) {
-      const [title, meal_type, healthy] = pick(MEALS)
+      const [title, meal_type, healthy, meal_tags] = pick(MEALS)
       posts.push({
         user_id: userId, author_name: person.name, kind: 'meal',
         title, meal_type, is_cheat: !healthy, is_healthy: healthy,
-        created_at: day(d), note: null,
+        meal_tags, created_at: day(d), note: null,
       })
     }
   }
@@ -151,7 +166,7 @@ async function seedPerson(userId, person) {
     posts.push({
       user_id: userId, author_name: person.name, kind: 'tip',
       title: t.title, video_url: t.video_url ?? null,
-      created_at: day(2 + i * 5), note: null,
+      meal_tags: [], created_at: day(2 + i * 5), note: null,
     })
   })
 

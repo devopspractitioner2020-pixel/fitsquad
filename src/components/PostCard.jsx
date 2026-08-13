@@ -5,11 +5,21 @@ import { REACTIONS, setReaction, describeReactionError } from '../lib/reactions'
 import {
   getComments, addComment, deleteComment, describeCommentError, MAX_COMMENT_CHARS,
 } from '../lib/comments'
+import { updatePost, describePostError, MAX_TITLE_CHARS } from '../lib/posts'
+import {
+  WORKOUT_TYPES, MEAL_TAGS, postSubtitle, postIcon, postPills,
+} from '../lib/postLabels'
 
 
 // One post, used by both the feed and the saved lists. It lived inside
 // Feed.jsx until saving needed the same card in two places — duplicating it
 // would have meant every future tweak had to be made twice.
+
+const PILL_TONE = {
+  healthy: 'text-mint bg-mint/[0.12]',
+  cheat: 'text-[#ff8bd0] bg-[#ff8bd0]/[0.12]',
+  tag: 'text-muted bg-white/[0.06]',
+}
 
 export default function PostCard({
   post,
@@ -20,11 +30,12 @@ export default function PostCard({
   onReactionChange,
   commentCount = 0,
   onCommentCountChange,
+  onPostChange,
 }) {
   const [saveError, setSaveError] = useState('')
+  const [editing, setEditing] = useState(false)
+  const isMine = !!userId && post.user_id === userId
   const when = timeAgo(post.created_at)
-  const kindLabel = post.kind === 'workout' ? 'Strength' : post.kind === 'meal' ? 'Healthy Meal' : 'Tip'
-  const kindIcon = post.kind === 'meal' ? '🍽️' : post.kind === 'tip' ? '✨' : '🏋️'
 
   return (
     <div className="bg-card border border-line rounded-xl2 p-5">
@@ -33,9 +44,28 @@ export default function PostCard({
           {(post.author_name ?? '?')[0]?.toUpperCase()}
         </div>
         <div className="flex-1">
-          <div className="font-display font-700">{post.author_name} <span className="text-muted font-body font-400">· {when}</span></div>
-          <div className="text-muted text-sm">{kindIcon} {kindLabel}</div>
+          <div className="font-display font-700">
+            {post.author_name}{' '}
+            <span className="text-muted font-body font-400">· {when}</span>
+            {/* Said out loud, because a post that changes under someone who
+                already replied to it should not do so silently. */}
+            {post.edited_at && <span className="text-muted-2 font-body font-400 text-sm"> · edited</span>}
+          </div>
+          {/* Read off the post, not off its kind. This line used to be a
+              hardcoded ternary: every workout claimed to be "Strength", and
+              a cheat meal announced itself as a "Healthy Meal". */}
+          <div className="text-muted text-sm">{postIcon(post)} {postSubtitle(post)}</div>
         </div>
+
+        {isMine && !editing && (
+          <button
+            onClick={() => setEditing(true)}
+            aria-label={`Edit ${post.title}`}
+            className="text-muted text-sm px-2 py-1"
+          >
+            Edit
+          </button>
+        )}
 
         {/* Saving sits in the header rather than down with the reactions:
             it is about the reader, not about the author, and it should not
@@ -55,14 +85,27 @@ export default function PostCard({
         <p className="text-[#ffd479] text-sm mb-3" role="status">{saveError}</p>
       )}
 
+      {editing ? (
+        <EditPost
+          post={post}
+          onCancel={() => setEditing(false)}
+          onSaved={(patch) => { setEditing(false); onPostChange?.(post.id, patch) }}
+        />
+      ) : (
+      <>
       <div className="flex items-center gap-2 flex-wrap mb-1">
         <h4 className="font-display text-[26px] font-700">{post.title}</h4>
         {/* /12 is not on Tailwind's opacity scale — these pills had no
-            background at all until the arbitrary-value syntax was used. */}
-        {post.is_healthy && <span className="text-mint bg-mint/[0.12] rounded-full px-3 py-0.5 text-sm font-700">healthy</span>}
-        {post.is_cheat && <span className="text-[#ff8bd0] bg-[#ff8bd0]/[0.12] rounded-full px-3 py-0.5 text-sm font-700">cheat 😈</span>}
+            background at all until the arbitrary-value syntax was used.
+            postPills() decides which appear: cheat and healthy are mutually
+            exclusive, and the descriptive tags follow. */}
+        {postPills(post).map((pill) => (
+          <span key={pill.key} className={`rounded-full px-3 py-0.5 text-sm font-700 ${PILL_TONE[pill.tone]}`}>
+            {pill.label}
+          </span>
+        ))}
       </div>
-      {post.minutes && <p className="text-muted mb-2">{post.minutes} min · Strength</p>}
+      {post.minutes && <p className="text-muted mb-2">{post.minutes} min · {postSubtitle(post)}</p>}
       {post.note && <p className="text-muted mb-2">{post.note}</p>}
 
       {post.photo_url && (
@@ -70,6 +113,8 @@ export default function PostCard({
       )}
 
       {post.video_url && <VideoEmbed url={post.video_url} />}
+      </>
+      )}
 
       <Reactions
         post={post}
@@ -296,6 +341,140 @@ function Reactions({ post, userId, reactions, onReactionChange, commentCount, on
         onCountChange={onCommentCountChange}
       />
     </>
+  )
+}
+
+/**
+ * Edit your own post, in place.
+ *
+ * Title, note, and the fields specific to the kind — not the kind itself.
+ * Turning a meal into a workout after four people have reacted rewrites what
+ * they were reacting to, and there is no honest way to show that.
+ */
+function EditPost({ post, onCancel, onSaved }) {
+  const [title, setTitle] = useState(post.title ?? '')
+  const [note, setNote] = useState(post.note ?? '')
+  const [minutes, setMinutes] = useState(post.minutes ?? '')
+  const [isCheat, setIsCheat] = useState(!!post.is_cheat)
+  const [workoutType, setWorkoutType] = useState(post.workout_type ?? '')
+  const [mealTags, setMealTags] = useState(() => new Set(post.meal_tags ?? []))
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+
+  async function save() {
+    setErr(''); setBusy(true)
+    try {
+      const fields = { title, note }
+      if (post.kind === 'workout') {
+        fields.minutes = minutes
+        fields.workout_type = workoutType
+      }
+      if (post.kind === 'meal') {
+        fields.is_cheat = isCheat
+        fields.meal_tags = [...mealTags]
+      }
+      const patch = await updatePost(post.id, fields)
+      onSaved(patch)
+    } catch (e) {
+      setErr(describePostError(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="bg-panel/60 border border-line rounded-2xl p-4 my-2">
+      <label className="block">
+        <span className="label">Title</span>
+        <input
+          className="input" value={title} maxLength={MAX_TITLE_CHARS}
+          onChange={(e) => setTitle(e.target.value)} aria-label="Title"
+        />
+      </label>
+
+      {post.kind === 'workout' && (
+        <label className="block mt-3">
+          <span className="label">Type</span>
+          <select
+            className="input" value={workoutType} aria-label="Type"
+            onChange={(e) => setWorkoutType(e.target.value)}
+          >
+            <option value="">Not specified</option>
+            {WORKOUT_TYPES.map((t) => (
+              <option key={t.value} value={t.value}>{t.label}</option>
+            ))}
+          </select>
+        </label>
+      )}
+
+      {post.kind === 'workout' && (
+        <label className="block mt-3">
+          <span className="label">Minutes</span>
+          <input
+            className="input" type="number" inputMode="numeric" value={minutes}
+            onChange={(e) => setMinutes(e.target.value)} aria-label="Minutes"
+          />
+        </label>
+      )}
+
+      <label className="block mt-3">
+        <span className="label">Note</span>
+        <textarea
+          className="input min-h-[72px] resize-none" value={note}
+          onChange={(e) => setNote(e.target.value)} aria-label="Note"
+        />
+      </label>
+
+      {post.kind === 'meal' && (
+        <fieldset className="mt-3">
+          <legend className="label">Labels</legend>
+          <div className="flex gap-2 flex-wrap">
+            {MEAL_TAGS.map((t) => (
+              <label key={t.value} className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  className="sr-only peer"
+                  checked={mealTags.has(t.value)}
+                  onChange={(e) => setMealTags((prev) => {
+                    const next = new Set(prev)
+                    if (e.target.checked) next.add(t.value)
+                    else next.delete(t.value)
+                    return next
+                  })}
+                />
+                <span className="rounded-full border border-line px-3 py-1.5 text-sm text-muted peer-checked:border-mint/50 peer-checked:bg-mint/[0.12] peer-checked:text-mint peer-focus-visible:ring-2 peer-focus-visible:ring-mint">
+                  {t.label}
+                </span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
+      )}
+
+      {post.kind === 'meal' && (
+        <label className="flex items-center gap-3 mt-3">
+          <input
+            type="checkbox" checked={isCheat} className="w-5 h-5 accent-[#2FE6A8]"
+            aria-label="Cheat meal"
+            onChange={(e) => setIsCheat(e.target.checked)}
+          />
+          <span className="text-muted text-sm">Was it a sin? 😈</span>
+        </label>
+      )}
+
+      {err && <p className="text-[#ffd479] text-sm mt-3" role="status">{err}</p>}
+
+      <div className="flex gap-3 mt-4">
+        <button className="btn-ghost flex-1" onClick={onCancel}>Cancel</button>
+        <button
+          className="btn-primary flex-1 flex items-center justify-center gap-2"
+          onClick={save}
+          disabled={busy || !title.trim()}
+        >
+          {busy ? <><span className="spinner" /> Saving…</> : 'Save changes'}
+        </button>
+      </div>
+    </div>
   )
 }
 

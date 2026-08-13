@@ -38,6 +38,18 @@ vi.mock('../../lib/reactions', async (importOriginal) => ({
 // The embed has its own suite and would drag IntersectionObserver in here.
 vi.mock('../../components/VideoEmbed', () => ({ default: () => <div /> }))
 
+const isReady = vi.fn(() => true)
+vi.mock('../../lib/recap', async (importOriginal) => ({
+  ...(await importOriginal()),
+  isReady: (...a) => isReady(...a),
+}))
+
+const getCommentCounts = vi.fn(async () => new Map())
+vi.mock('../../lib/comments', async (importOriginal) => ({
+  ...(await importOriginal()),
+  getCommentCounts: (...a) => getCommentCounts(...a),
+}))
+
 import { supabase } from '../../lib/supabase'
 import Feed from '../Feed'
 
@@ -61,6 +73,8 @@ beforeEach(() => {
   supabase.rpc.mockReset().mockResolvedValue({ data: 0, error: null })
   getReactions.mockClear().mockResolvedValue(new Map())
   setReaction.mockClear().mockResolvedValue(undefined)
+  getCommentCounts.mockClear().mockResolvedValue(new Map())
+  isReady.mockClear().mockReturnValue(true)
 })
 
 describe('the heading', () => {
@@ -162,5 +176,25 @@ describe('the activity bell', () => {
 
     window.dispatchEvent(new Event('fitsquad:activity-seen'))
     await waitFor(() => expect(screen.queryByTestId('unseen-badge')).toBeNull())
+  })
+})
+
+describe('the weekly recap banner', () => {
+  it('invites you in once the week is out', async () => {
+    await renderFeed()
+    expect(await screen.findByText(/your week, in stories/i)).toBeInTheDocument()
+  })
+
+  it('opens the recap', async () => {
+    await renderFeed()
+    await userEvent.click(await screen.findByText(/your week, in stories/i))
+    expect(navigate).toHaveBeenCalledWith('/recap')
+  })
+
+  // A banner leading to "come back Sunday" is an advert for a locked door.
+  it('stays hidden until Sunday evening', async () => {
+    isReady.mockReturnValue(false)
+    await renderFeed()
+    expect(screen.queryByText(/your week, in stories/i)).toBeNull()
   })
 })

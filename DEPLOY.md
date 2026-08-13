@@ -9,7 +9,7 @@ Total time: about 45 minutes, most of it waiting for DNS.
 
 ## Step 1b. Run the migrations (5 min — do this first)
 
-Ten migrations to run in **SQL Editor → New query**, **in order**.
+Twelve migrations to run in **SQL Editor → New query**, **in order**.
 
 > ⚠️ Each file is idempotent on its own, but the ORDER matters and re-running
 > an early one alone is not harmless. `0002` and `0004` both define
@@ -46,8 +46,16 @@ Ten migrations to run in **SQL Editor → New query**, **in order**.
    Until this ran, tapping a reaction did nothing at all.
 10. `0011_comments.sql` — the `comments` table behind the Comment button,
     and it widens the activity feed to cover replies as well as reactions.
+11. `0012_edit_and_recap.sql` — an UPDATE policy on `posts` (there was none,
+    so editing was impossible at the database level, not just missing from
+    the screen), and `squad_recap()` behind the Sunday-evening weekly recap.
+12. `0013_post_labels.sql` — `posts.workout_type` and `posts.meal_tags`. The
+    line under an author's name was a hardcoded ternary, so every workout
+    claimed to be "Strength" and a cheat meal announced itself as a "Healthy
+    Meal". Deliberately **not** backfilled: those old workouts were never
+    categorised by anyone, so they now read as a plain "Workout".
 
-Confirm all ten:
+Confirm all twelve:
 
 ```sql
 select tgname from pg_trigger where tgname = 'on_auth_user_created';
@@ -74,8 +82,39 @@ select to_regclass('public.reactions') as reactions,
        to_regclass('public.comments')  as comments;
 select to_regprocedure('public.my_activity(int)')   as my_activity,
        to_regprocedure('public.rename_squad(uuid,text)') as rename_squad,
-       to_regprocedure('public.post_comments(uuid)')     as post_comments;
+       to_regprocedure('public.post_comments(uuid)')     as post_comments,
+       to_regprocedure('public.squad_recap(uuid,date)')  as squad_recap;
+
+-- Editing needs an UPDATE policy on posts. Expect one row.
+select polname from pg_policy
+where polrelid = 'public.posts'::regclass and polcmd = 'w';
+
+select column_name from information_schema.columns
+ where table_name = 'posts' and column_name in ('workout_type', 'meal_tags');
 ```
+
+### The weekly recap, and why there is no cron job
+
+`squad_recap()` computes a week on demand from the posts, reactions and
+weigh-ins already in the database, and returns `null` until **Sunday 18:00
+UTC** of that week. From the reader's side that is exactly "generated Sunday
+at 6pm" — nothing to see before, the week appears after — but there is no
+scheduled job that can quietly stop running, no backfill to write, and a
+recap from three months ago still renders.
+
+If you later want it materialised — to send a push notification on Sunday
+evening, say — enable `pg_cron` under **Database → Extensions** and schedule
+a call to the same function:
+
+```sql
+select cron.schedule(
+  'weekly-recap', '0 18 * * 0',
+  $$ select public.squad_recap(id) from public.squads $$
+);
+```
+
+That is additive. The app does not depend on it, so a failed run costs you
+the notification and not the recap.
 
 ### Who is actually in which squad
 
@@ -971,6 +1010,7 @@ supabase functions deploy resolve-link
 | Short link posts but shows a tap-through card | `resolve-link` not deployed, or TikTok refused | `supabase functions deploy resolve-link`, then check the curl below. The post is never lost over this. |
 | Worker → Domains → Add → Custom domain says *No zones found* | `inkaitech.com` is not a Cloudflare zone — its nameservers still point at Hostinger (`ns*.dns-parking.com`) | Add the domain to Cloudflare and move the nameservers. Custom Domains need an active zone on the same account; partial/CNAME setup is not supported for them. Full walkthrough in §6.8. |
 | Email stops arriving after moving nameservers | The `MX` / `SPF` / `DKIM` / `DMARC` records did not come across in Cloudflare's import | Re-add them in Cloudflare DNS from the screenshot you took in §6.8 step 1. Mail routing is DNS; moving nameservers moves it. |
+| A cheat meal is labelled "Healthy Meal", or every workout says "Strength" | Migration `0013` not run — there is no `workout_type` or `meal_tags` column, so the card falls back to the old hardcoded text | Run `0013_post_labels.sql` and deploy. Posts logged before it read as a plain "Workout" and show the meal time instead; new ones carry what the author chose. |
 | Tapping a reaction or Comment does nothing | Migrations `0010` / `0011` not run — the `reactions` / `comments` tables are missing | Run them. The card now says so in place rather than only in the console. |
 | **Failed to send a request to the Edge Function** when generating a plan | Almost always CORS: this site's origin is missing from `ALLOWED_ORIGINS`, so the browser discarded the response. Also matches a genuinely unreachable function | Check the list, then prove it with the curl below. The app now names the origin that needs adding in the error itself. |
 | Someone signed up with a join code and is in NO squad at all — not yours, not their own | `handle_new_user()` was reverted to the 0002 version by a re-run, so the trigger stopped resolving join codes. Silent: signup still succeeds | Run `0009_signup_squad_fix.sql`. It restores the trigger, adds a second one that a re-run of 0002 cannot remove, and backfills the affected people into the squad whose code they typed. |

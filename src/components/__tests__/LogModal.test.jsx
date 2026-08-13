@@ -332,3 +332,105 @@ describe('attaching a video to a tip', () => {
     expect(lastInsert().video_url).toBeNull()
   })
 })
+
+// "Cuando quiero subir una foto no me deja elegir de la galería, solo me da
+// la opción de tomar la foto en el instante."
+//
+// The input carried capture="environment". That does not mean "prefer the
+// camera" — it means the camera is the ONLY source, so the phone skipped its
+// own picker and opened the lens. A meal photographed ten minutes earlier
+// could not be posted at all.
+describe('choosing a photo', () => {
+  const fileInput = () => document.querySelector('input[type="file"]')
+  const openType = async (label) => { setup(); await pick(label) }
+
+  it('does not force the camera', async () => {
+    await openType('meal')
+    expect(fileInput()).not.toHaveAttribute('capture')
+  })
+
+  it('still accepts images only, so the picker is not a file browser', async () => {
+    await openType('meal')
+    expect(fileInput()).toHaveAttribute('accept', 'image/*')
+  })
+
+  it('offers the same choice on a workout', async () => {
+    await openType('workout')
+    expect(fileInput()).not.toHaveAttribute('capture')
+  })
+})
+
+// "Same with workout, it always shows 'strength', it doesn't let me pick if
+// it was cardio or resistance." There was nowhere to say.
+describe('saying what a post is', () => {
+  it('offers every workout type, defaulting to strength', async () => {
+    setup()
+    await pick('Workout')
+
+    const select = screen.getByLabelText('Type')
+    expect(select).toHaveValue('strength')
+    for (const label of ['Strength', 'Cardio', 'Sport', 'Mobility', 'Class', 'Other']) {
+      expect(screen.getByRole('option', { name: new RegExp(label) })).toBeInTheDocument()
+    }
+  })
+
+  it('stores the workout type that was chosen', async () => {
+    setup()
+    await pick('Workout')
+    await userEvent.type(screen.getByLabelText(/what did you do/i), 'Morning run')
+    await userEvent.selectOptions(screen.getByLabelText('Type'), 'cardio')
+    await userEvent.click(screen.getByRole('button', { name: /log it/i }))
+
+    await waitFor(() => expect(insert).toHaveBeenCalled())
+    expect(lastInsert()).toMatchObject({ kind: 'workout', workout_type: 'cardio' })
+  })
+
+  it('offers meal labels, none selected by default', async () => {
+    setup()
+    await pick('Meal')
+    for (const label of ['High protein', 'Home-cooked', 'Eating out', 'Veggie', 'Quick']) {
+      expect(screen.getByRole('checkbox', { name: label })).not.toBeChecked()
+    }
+  })
+
+  it('stores the meal labels that were ticked', async () => {
+    setup()
+    await pick('Meal')
+    await userEvent.type(screen.getByLabelText(/what did you eat/i), 'Ceviche')
+    await userEvent.click(screen.getByRole('checkbox', { name: 'High protein' }))
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Home-cooked' }))
+    await userEvent.click(screen.getByRole('button', { name: /log it/i }))
+
+    await waitFor(() => expect(insert).toHaveBeenCalled())
+    expect(lastInsert().meal_tags).toEqual(['high-protein', 'home-cooked'])
+  })
+
+  // A workout_type on a meal violates a CHECK constraint in 0013, and is
+  // meaningless besides.
+  it('never puts a workout type on a meal', async () => {
+    setup()
+    await pick('Meal')
+    await userEvent.type(screen.getByLabelText(/what did you eat/i), 'Ceviche')
+    await userEvent.click(screen.getByRole('button', { name: /log it/i }))
+
+    await waitFor(() => expect(insert).toHaveBeenCalled())
+    expect(lastInsert().workout_type).toBeNull()
+  })
+
+  it('never puts meal tags on a workout', async () => {
+    setup()
+    await pick('Workout')
+    await userEvent.type(screen.getByLabelText(/what did you do/i), 'Push day')
+    await userEvent.click(screen.getByRole('button', { name: /log it/i }))
+
+    await waitFor(() => expect(insert).toHaveBeenCalled())
+    expect(lastInsert().meal_tags).toEqual([])
+  })
+
+  it('offers neither on a tip', async () => {
+    setup()
+    await pick('Share tip')
+    expect(screen.queryByLabelText('Type')).toBeNull()
+    expect(screen.queryByRole('checkbox', { name: 'Veggie' })).toBeNull()
+  })
+})

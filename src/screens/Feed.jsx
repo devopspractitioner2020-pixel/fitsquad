@@ -8,11 +8,16 @@ import PostCard from '../components/PostCard'
 import { getSavedPostIds } from '../lib/saved'
 import { getReactions } from '../lib/reactions'
 import { getCommentCounts } from '../lib/comments'
+import { lastWeekKey, isReady, weekLabel } from '../lib/recap'
 
 export default function Feed() {
   const { user, profile, signOut } = useAuth()
   const nav = useNavigate()
   const { unseen } = useUnseenActivity(user?.id)
+  // Recomputed on every render rather than stored: it flips once a week, and
+  // a value in state would be stale for anyone who left the tab open.
+  const recapWeek = lastWeekKey()
+  const recapReady = isReady(recapWeek)
   const [posts, setPosts] = useState([])
   const [savedIds, setSavedIds] = useState(() => new Set())
   const [reactions, setReactions] = useState(() => new Map())
@@ -82,6 +87,10 @@ export default function Feed() {
     })
   }
 
+  function onPostChange(postId, patch) {
+    setPosts((prev) => prev.map((p) => (p.id === postId ? { ...p, ...patch } : p)))
+  }
+
   function onCommentCountChange(postId, count) {
     setCommentCounts((prev) => new Map(prev).set(postId, count))
   }
@@ -106,6 +115,22 @@ export default function Feed() {
         <h1 className="font-display text-[28px] font-800 mt-2 mb-5">
           Hey {profile?.display_name ?? 'there'}
         </h1>
+
+        {/* Only once the week is out. A banner that leads to "come back
+            Sunday" is an advert for a locked door. */}
+        {recapReady && (
+          <button
+            onClick={() => nav('/recap')}
+            className="w-full text-left bg-mint/[0.08] border border-mint/40 rounded-xl2 p-4 mb-6 flex items-center gap-4"
+          >
+            <span className="text-[32px]" aria-hidden="true">🎬</span>
+            <span className="flex-1">
+              <span className="block font-display text-[19px] font-700">Your week, in stories</span>
+              <span className="block text-muted text-sm">{weekLabel(recapWeek)} · tap to play</span>
+            </span>
+            <span className="text-mint" aria-hidden="true">→</span>
+          </button>
+        )}
 
         {/* Weekly summary */}
         <div className="bg-card border border-line rounded-xl2 p-5 mb-6">
@@ -138,6 +163,7 @@ export default function Feed() {
               onReactionChange={onReactionChange}
               commentCount={commentCounts.get(p.id) ?? 0}
               onCommentCountChange={onCommentCountChange}
+              onPostChange={onPostChange}
             />
           ))}
         </div>

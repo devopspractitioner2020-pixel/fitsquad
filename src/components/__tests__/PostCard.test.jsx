@@ -14,6 +14,12 @@ vi.mock('../../lib/reactions', async (importOriginal) => ({
   setReaction: (...a) => setReaction(...a),
 }))
 
+const updatePost = vi.fn(async () => ({ title: 'x' }))
+vi.mock('../../lib/posts', async (importOriginal) => ({
+  ...(await importOriginal()),
+  updatePost: (...a) => updatePost(...a),
+}))
+
 const getComments = vi.fn(async () => [])
 const addComment = vi.fn(async () => {})
 const deleteComment = vi.fn(async () => {})
@@ -49,6 +55,7 @@ beforeEach(() => {
   getComments.mockClear().mockResolvedValue([])
   addComment.mockClear().mockResolvedValue(undefined)
   deleteComment.mockClear().mockResolvedValue(undefined)
+  updatePost.mockClear().mockResolvedValue({ title: 'Edited', edited_at: 'now' })
 })
 
 const fire = () => screen.getByRole('button', { name: /🔥 reaction/ })
@@ -505,5 +512,210 @@ describe('comments', () => {
 
     await userEvent.click(commentToggle())
     expect(await screen.findByText(/comments table is missing/i)).toBeInTheDocument()
+  })
+})
+
+// "También quiero que soluciones la opción de poder editar un post."
+// There was no UPDATE policy on `posts` at all, so this was impossible in
+// the database as well as absent from the screen — fixing a typo meant
+// deleting the post, and that took its reactions and comments with it.
+describe('editing your own post', () => {
+  const mine = (over = {}) => post({ user_id: 'u1', ...over })
+  const editBtn = () => screen.getByRole('button', { name: /^edit /i })
+
+  it('offers Edit on your own post', () => {
+    render(<PostCard post={mine()} userId="u1" />)
+    expect(editBtn()).toBeInTheDocument()
+  })
+
+  it('does not offer it on somebody else\'s', () => {
+    render(<PostCard post={post({ user_id: 'u2' })} userId="u1" />)
+    expect(screen.queryByRole('button', { name: /^edit /i })).toBeNull()
+  })
+
+  it('does not offer it when signed out', () => {
+    render(<PostCard post={post({ user_id: 'u1' })} userId={undefined} />)
+    expect(screen.queryByRole('button', { name: /^edit /i })).toBeNull()
+  })
+
+  it('opens pre-filled, so it is an edit and not a retype', async () => {
+    render(<PostCard post={mine({ title: 'Push day', note: 'felt strong' })} userId="u1" />)
+    await userEvent.click(editBtn())
+
+    expect(screen.getByLabelText('Title')).toHaveValue('Push day')
+    expect(screen.getByLabelText('Note')).toHaveValue('felt strong')
+  })
+
+  it('saves the change', async () => {
+    render(<PostCard post={mine()} userId="u1" />)
+    await userEvent.click(editBtn())
+
+    const title = screen.getByLabelText('Title')
+    await userEvent.clear(title)
+    await userEvent.type(title, 'Pull day')
+    await userEvent.click(screen.getByRole('button', { name: /save changes/i }))
+
+    await waitFor(() => expect(updatePost).toHaveBeenCalledWith('p1', expect.objectContaining({
+      title: 'Pull day',
+    })))
+  })
+
+  it('hands the change up so the feed shows it without a refetch', async () => {
+    const onPostChange = vi.fn()
+    updatePost.mockResolvedValue({ title: 'Pull day', note: null, edited_at: 'now' })
+    render(<PostCard post={mine()} userId="u1" onPostChange={onPostChange} />)
+
+    await userEvent.click(editBtn())
+    await userEvent.click(screen.getByRole('button', { name: /save changes/i }))
+
+    await waitFor(() => expect(onPostChange).toHaveBeenCalledWith('p1', expect.objectContaining({
+      title: 'Pull day',
+    })))
+  })
+
+  it('offers minutes on a workout', async () => {
+    render(<PostCard post={mine({ kind: 'workout', minutes: 45 })} userId="u1" />)
+    await userEvent.click(editBtn())
+    expect(screen.getByLabelText('Minutes')).toHaveValue(45)
+    expect(screen.queryByRole('checkbox')).toBeNull()
+  })
+
+  it('offers the cheat toggle on a meal', async () => {
+    render(<PostCard post={mine({ kind: 'meal', is_cheat: true })} userId="u1" />)
+    await userEvent.click(editBtn())
+    expect(screen.getByRole('checkbox', { name: /cheat meal/i })).toBeChecked()
+    expect(screen.queryByLabelText('Minutes')).toBeNull()
+  })
+
+  it('will not save an empty title', async () => {
+    render(<PostCard post={mine()} userId="u1" />)
+    await userEvent.click(editBtn())
+    await userEvent.clear(screen.getByLabelText('Title'))
+    expect(screen.getByRole('button', { name: /save changes/i })).toBeDisabled()
+  })
+
+  it('keeps what you typed when the save fails, and says why', async () => {
+    updatePost.mockRejectedValue({ code: '42501' })
+    render(<PostCard post={mine()} userId="u1" />)
+
+    await userEvent.click(editBtn())
+    const title = screen.getByLabelText('Title')
+    await userEvent.clear(title)
+    await userEvent.type(title, 'Pull day')
+    await userEvent.click(screen.getByRole('button', { name: /save changes/i }))
+
+    expect(await screen.findByText(/only edit your own posts/i)).toBeInTheDocument()
+    expect(screen.getByLabelText('Title')).toHaveValue('Pull day')
+  })
+
+  it('closes without saving on Cancel', async () => {
+    render(<PostCard post={mine()} userId="u1" />)
+    await userEvent.click(editBtn())
+    await userEvent.click(screen.getByRole('button', { name: /^cancel$/i }))
+
+    expect(screen.queryByLabelText('Title')).toBeNull()
+    expect(updatePost).not.toHaveBeenCalled()
+  })
+
+  // A post that changes under someone who already replied to it should not
+  // do so silently.
+  it('marks an edited post as edited', () => {
+    render(<PostCard post={mine({ edited_at: '2026-08-02T10:00:00Z' })} userId="u1" />)
+    expect(screen.getByText(/· edited/)).toBeInTheDocument()
+  })
+
+  it('says nothing on a post that has never been edited', () => {
+    render(<PostCard post={mine()} userId="u1" />)
+    expect(screen.queryByText(/· edited/)).toBeNull()
+  })
+
+  // Reactions and comments belong to the post, not to the draft.
+  it('keeps the reactions reachable while editing', async () => {
+    render(<PostCard post={mine()} userId="u1" />)
+    await userEvent.click(editBtn())
+    expect(screen.getByRole('button', { name: /🔥 reaction/ })).toBeInTheDocument()
+  })
+})
+
+// The screenshot: a post titled "Fried rice and dessert", carrying a pink
+// "cheat 😈" pill, with "🍽️ Healthy Meal" printed directly under the
+// author's name.
+describe('what the card says a post is', () => {
+  it('does not call a cheat meal a healthy meal', () => {
+    render(<PostCard post={post({ kind: 'meal', is_cheat: true, is_healthy: false, meal_type: 'Dinner' })} userId="u1" />)
+    expect(screen.queryByText(/healthy meal/i)).toBeNull()
+    expect(screen.getByText(/Dinner/)).toBeInTheDocument()
+    expect(screen.getByText(/cheat/)).toBeInTheDocument()
+  })
+
+  it('does not claim every workout is strength', () => {
+    render(<PostCard post={post({ kind: 'workout', workout_type: 'cardio' })} userId="u1" />)
+    expect(screen.getByText(/Cardio/)).toBeInTheDocument()
+    expect(screen.queryByText(/Strength/)).toBeNull()
+  })
+
+  it('says plain Workout for a post logged before there was a choice', () => {
+    render(<PostCard post={post({ kind: 'workout', workout_type: null })} userId="u1" />)
+    expect(screen.getByText(/🏋️ Workout/)).toBeInTheDocument()
+  })
+
+  it('uses the type in the minutes line too', () => {
+    render(<PostCard post={post({ kind: 'workout', workout_type: 'sport', minutes: 90 })} userId="u1" />)
+    expect(screen.getByText('90 min · Sport')).toBeInTheDocument()
+  })
+
+  it('shows the descriptive tags a meal carries', () => {
+    render(<PostCard post={post({ kind: 'meal', is_healthy: true, meal_tags: ['high-protein', 'home-cooked'] })} userId="u1" />)
+    expect(screen.getByText('healthy')).toBeInTheDocument()
+    expect(screen.getByText('High protein')).toBeInTheDocument()
+    expect(screen.getByText('Home-cooked')).toBeInTheDocument()
+  })
+
+  it('shows no pill at all on a meal that is neither healthy nor a cheat', () => {
+    render(<PostCard post={post({ kind: 'meal', is_healthy: false, is_cheat: false, meal_type: 'Snack' })} userId="u1" />)
+    expect(screen.queryByText('healthy')).toBeNull()
+    expect(screen.queryByText(/cheat/)).toBeNull()
+    expect(screen.getByText(/Snack/)).toBeInTheDocument()
+  })
+})
+
+describe('editing the labels', () => {
+  const mineMeal = (over = {}) => post({ user_id: 'u1', kind: 'meal', ...over })
+
+  it('lets you correct a workout that was logged as the wrong type', async () => {
+    render(<PostCard post={post({ user_id: 'u1', kind: 'workout', workout_type: 'strength' })} userId="u1" />)
+    await userEvent.click(screen.getByRole('button', { name: /^edit /i }))
+
+    await userEvent.selectOptions(screen.getByLabelText('Type'), 'cardio')
+    await userEvent.click(screen.getByRole('button', { name: /save changes/i }))
+
+    await waitFor(() => expect(updatePost).toHaveBeenCalledWith('p1', expect.objectContaining({
+      workout_type: 'cardio',
+    })))
+  })
+
+  it('lets you add and remove meal labels', async () => {
+    render(<PostCard post={mineMeal({ meal_tags: ['veggie'] })} userId="u1" />)
+    await userEvent.click(screen.getByRole('button', { name: /^edit /i }))
+
+    expect(screen.getByRole('checkbox', { name: 'Veggie' })).toBeChecked()
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Veggie' }))
+    await userEvent.click(screen.getByRole('checkbox', { name: 'High protein' }))
+    await userEvent.click(screen.getByRole('button', { name: /save changes/i }))
+
+    await waitFor(() => expect(updatePost).toHaveBeenCalledWith('p1', expect.objectContaining({
+      meal_tags: ['high-protein'],
+    })))
+  })
+
+  it('does not offer meal labels on a workout, or a type on a meal', async () => {
+    render(<PostCard post={post({ user_id: 'u1', kind: 'workout' })} userId="u1" />)
+    await userEvent.click(screen.getByRole('button', { name: /^edit /i }))
+    expect(screen.queryByRole('checkbox', { name: 'Veggie' })).toBeNull()
+
+    cleanup()
+    render(<PostCard post={mineMeal({ id: 'p2' })} userId="u1" />)
+    await userEvent.click(screen.getByRole('button', { name: /^edit /i }))
+    expect(screen.queryByLabelText('Type')).toBeNull()
   })
 })

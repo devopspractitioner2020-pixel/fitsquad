@@ -82,6 +82,10 @@ describe('every RPC the app calls is defined in SQL', () => {
       'handle_new_user', 'handle_new_user_squad', 'ensure_user_squad',
       'shares_squad_with', 'is_squad_member', 'new_join_code',
       'fail_stuck_plans', 'set_updated_at', 'touch_updated_at',
+      // Helpers squad_recap() calls internally. The client has its own
+      // copies of both in src/lib/recap.js — the SQL is the authority and
+      // the JS only decides what to say while waiting.
+      'week_start', 'recap_available_at',
     ]
     const orphans = definedFunctions.filter(
       (f) => !calledRpcs.includes(f) && !internal.includes(f),

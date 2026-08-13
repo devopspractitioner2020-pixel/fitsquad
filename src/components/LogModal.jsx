@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import { uploadPhoto } from '../lib/image'
 import { parseVideoUrl, explainVideoUrl } from '../lib/embeds'
+import { WORKOUT_TYPES, MEAL_TAGS, labelsForKind } from '../lib/postLabels'
 
 // Photo picker with instant local preview. Compression + upload happens on submit.
 function PhotoField({ file, setFile }) {
@@ -24,8 +25,15 @@ function PhotoField({ file, setFile }) {
         <label className="flex items-center justify-center gap-2 h-24 rounded-2xl border border-dashed border-line text-muted cursor-pointer">
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#7C938C" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3Z"/><circle cx="12" cy="13" r="3.5"/></svg>
           Take or choose a photo
-          {/* capture attribute opens the camera directly on phones */}
-          <input type="file" accept="image/*" capture="environment" className="hidden"
+          {/*
+            NO `capture` attribute. It used to be `capture="environment"`,
+            which does not mean "prefer the camera" — it means "the camera is
+            the only source". The phone skipped the picker entirely and opened
+            the lens, so a meal photographed ten minutes ago could not be
+            posted at all. Without it the OS shows its own sheet, where the
+            camera is one option alongside the library.
+          */}
+          <input type="file" accept="image/*" className="hidden"
                  onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
         </label>
       )}
@@ -60,12 +68,15 @@ export default function LogModal({ open, onClose, onLogged, initialType = null }
   const [isCheat, setIsCheat] = useState(false)
   const [weight, setWeight] = useState('')
   const [healthy, setHealthy] = useState(true)
+  const [workoutType, setWorkoutType] = useState('strength')
+  const [mealTags, setMealTags] = useState(() => new Set())
 
   if (!open) return null
 
   function reset() {
     setType(initialType); setTitle(''); setNote(''); setFile(null); setMinutes('')
     setMealType('Lunch'); setIsCheat(false); setWeight(''); setHealthy(true)
+    setWorkoutType('strength'); setMealTags(new Set())
     setVideoUrl(''); setErr('')
   }
   function close() { reset(); onClose() }
@@ -130,6 +141,10 @@ export default function LogModal({ open, onClose, onLogged, initialType = null }
           meal_type: type === 'meal' ? mealType : null,
           is_cheat: type === 'meal' ? isCheat : null,
           is_healthy: type === 'meal' ? healthy && !isCheat : null,
+          // Only the labels that belong to this kind. A workout_type on a
+          // meal violates a CHECK constraint in migration 0013, and more to
+          // the point it is meaningless.
+          ...labelsForKind(type, { workoutType, mealTags: [...mealTags] }),
           photo_url,
           video_url,
         })
@@ -176,6 +191,17 @@ export default function LogModal({ open, onClose, onLogged, initialType = null }
             {type === 'workout' && (
               <div className="space-y-4">
                 <Field label="What did you do?" value={title} setValue={setTitle} placeholder="Push day" />
+                {/* There was no way to say this at all before: the card
+                    called every single workout "Strength", whether it was a
+                    10k, a football match or a yoga class. */}
+                <label className="block">
+                  <span className="label">Type</span>
+                  <select className="input" value={workoutType} onChange={(e) => setWorkoutType(e.target.value)}>
+                    {WORKOUT_TYPES.map((t) => (
+                      <option key={t.value} value={t.value}>{t.icon} {t.label}</option>
+                    ))}
+                  </select>
+                </label>
                 <Field label="Minutes" value={minutes} setValue={setMinutes} placeholder="45" type="number" />
                 <PhotoField file={file} setFile={setFile} />
                 <Field label="Note (optional)" value={note} setValue={setNote} placeholder="Felt strong" textarea />
@@ -191,6 +217,12 @@ export default function LogModal({ open, onClose, onLogged, initialType = null }
                     <option>Breakfast</option><option>Lunch</option><option>Dinner</option><option>Snack</option>
                   </select>
                 </label>
+                {/* A meal is not one bit. `is_healthy` is what the
+                    leaderboard counts and it stays a boolean, but these
+                    describe — a meal can be home-cooked AND high in protein,
+                    or none of it, and saying so is not the same as scoring
+                    it. */}
+                <TagPicker label="Labels (optional)" options={MEAL_TAGS} selected={mealTags} setSelected={setMealTags} />
                 <Toggle label="Was it a sin? 😈" hint="Own the cheat meal." value={isCheat} setValue={setIsCheat} />
                 <PhotoField file={file} setFile={setFile} />
                 <Field label="Note (optional)" value={note} setValue={setNote} placeholder="Extra details…" textarea />
@@ -274,6 +306,43 @@ function Field({ label, value, setValue, placeholder, type = 'text', textarea })
         ? <textarea className="input min-h-[96px] resize-none" value={value} placeholder={placeholder} onChange={(e) => setValue(e.target.value)} />
         : <input className="input" type={type} inputMode={type === 'number' ? 'decimal' : undefined} value={value} placeholder={placeholder} onChange={(e) => setValue(e.target.value)} />}
     </label>
+  )
+}
+
+/**
+ * Multi-select chips.
+ *
+ * Real checkboxes underneath, visually hidden and styled through `peer`, so
+ * the whole group is keyboard-navigable and announced as a set rather than
+ * being a row of divs that only respond to a mouse.
+ */
+function TagPicker({ label, options, selected, setSelected }) {
+  const toggle = (value, on) => setSelected((prev) => {
+    const next = new Set(prev)
+    if (on) next.add(value)
+    else next.delete(value)
+    return next
+  })
+
+  return (
+    <fieldset>
+      <legend className="label">{label}</legend>
+      <div className="flex gap-2 flex-wrap">
+        {options.map((o) => (
+          <label key={o.value} className="cursor-pointer">
+            <input
+              type="checkbox"
+              className="sr-only peer"
+              checked={selected.has(o.value)}
+              onChange={(e) => toggle(o.value, e.target.checked)}
+            />
+            <span className="inline-block rounded-full border border-line px-4 py-2 text-sm text-muted peer-checked:border-mint/50 peer-checked:bg-mint/[0.12] peer-checked:text-mint peer-focus-visible:ring-2 peer-focus-visible:ring-mint">
+              {o.label}
+            </span>
+          </label>
+        ))}
+      </div>
+    </fieldset>
   )
 }
 
