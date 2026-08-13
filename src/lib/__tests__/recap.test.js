@@ -101,10 +101,18 @@ const recap = (over = {}) => ({
   top_logger: { name: 'Vic', logs: 12 },
   biggest_drop: { name: 'María', delta: -1.4 },
   training: { sessions: 9, minutes: 480, top_type: 'strength', people: 3 },
-  top_post: { id: 'p1', title: 'Push day', author: 'Vic', reactions: 6, kind: 'workout' },
-  top_workout: { id: 'p2', title: 'Morning run', author: 'María', reactions: 4, kind: 'workout' },
-  top_meal: { id: 'p3', title: 'Ceviche', author: 'Diego', reactions: 3, kind: 'meal', photo_url: 'https://x/y.jpg' },
-  top_tip: { id: 'p4', title: 'Prep on Sunday', author: 'Sam', reactions: 2, kind: 'tip' },
+  top_workout: {
+    id: 'p2', title: 'Morning run', author: 'María', reactions: 4, kind: 'workout',
+    reaction_emoji: { '🔥': 3, '💪': 1 },
+  },
+  top_meal: {
+    id: 'p3', title: 'Ceviche', author: 'Diego', reactions: 3, kind: 'meal',
+    photo_url: 'https://x/y.jpg', reaction_emoji: { '🤤': 3 },
+  },
+  top_tip: {
+    id: 'p4', title: 'Prep on Sunday', author: 'Sam', reactions: 2, kind: 'tip',
+    video_url: 'https://www.instagram.com/reel/abc/', reaction_emoji: { '👏': 2 },
+  },
   ...over,
 })
 
@@ -146,11 +154,11 @@ describe('buildStories', () => {
     expect(card.subtitle).toBe('down 1.4 kg')
   })
 
-  it('crowns exactly one most-loved post', () => {
-    const card = buildStories(recap()).find((c) => c.id === 'top-post')
-    expect(card.eyebrow).toBe('Most loved')
-    expect(card.title).toBe('Push day')
-    expect(card.subtitle).toBe('Vic · 6 reactions')
+  it('names the author under the title, without a reaction count', () => {
+    const card = buildStories(recap()).find((c) => c.id === 'top-meal')
+    expect(card.title).toBe('Ceviche')
+    expect(card.subtitle).toBe('Diego')
+    expect(card.subtitle).not.toMatch(/reaction/)
   })
 
   it('carries a post photo through, so the card can show it', () => {
@@ -166,7 +174,7 @@ describe('buildStories', () => {
       training: { sessions: 0, minutes: 0, top_type: null, people: 0 },
       top_logger: null,
       biggest_drop: null,
-      top_post: null, top_workout: null, top_meal: null, top_tip: null,
+      top_workout: null, top_meal: null, top_tip: null,
       top_posts: [],
     })
 
@@ -195,12 +203,8 @@ describe('buildStories', () => {
   })
 
   it('pluralises everything it counts', () => {
-    const one = buildStories(recap({
-      top_logger: { name: 'Vic', logs: 1 },
-      top_post: { id: 'p1', title: 'x', author: 'Vic', reactions: 1 },
-    }))
+    const one = buildStories(recap({ top_logger: { name: 'Vic', logs: 1 } }))
     expect(one.find((c) => c.id === 'top-logger').subtitle).toBe('1 log this week')
-    expect(one.find((c) => c.id === 'top-post').subtitle).toBe('Vic · 1 reaction')
   })
 
   it('is empty for no recap at all', () => {
@@ -225,9 +229,12 @@ describe('buildStories', () => {
 describe('every story card says something different', () => {
   const eyebrows = (r) => buildStories(r).map((c) => c.eyebrow)
 
-  it('uses "Most loved" exactly once', () => {
-    const used = eyebrows(recap()).filter((e) => e === 'Most loved')
-    expect(used).toHaveLength(1)
+  // "Most loved" and "Best plate" were both meals — most of what gets posted
+  // is food, so the overall winner usually WAS the top meal, and no reader
+  // could say what separated the two cards.
+  it('has no overall superlative competing with the per-kind cards', () => {
+    expect(eyebrows(recap())).not.toContain('Most loved')
+    expect(buildStories(recap()).map((c) => c.id)).not.toContain('top-post')
   })
 
   it('never repeats any eyebrow', () => {
@@ -238,23 +245,82 @@ describe('every story card says something different', () => {
   it('covers training, the plate and a tip as separate cards', () => {
     const cards = buildStories(recap())
     expect(cards.find((c) => c.id === 'top-workout').eyebrow).toBe('Session of the week')
-    expect(cards.find((c) => c.id === 'top-meal').eyebrow).toBe('Best plate')
+    expect(cards.find((c) => c.id === 'top-meal').eyebrow).toBe('Plate of the week')
     expect(cards.find((c) => c.id === 'top-tip').eyebrow).toBe('Tip worth keeping')
   })
 
-  it('never shows the same post twice under two headings', () => {
-    // A response where the overall winner is also the top workout — which
-    // the SQL excludes, but an older deploy would not.
-    const dup = { id: 'p1', title: 'Push day', author: 'Vic', reactions: 6 }
-    const cards = buildStories(recap({ top_post: dup, top_workout: dup }))
-    expect(cards.filter((c) => c.title === 'Push day')).toHaveLength(1)
+  it('shows each post once, even if one wins two categories', () => {
+    const dup = { id: 'p2', title: 'Morning run', author: 'María', reactions: 4 }
+    const cards = buildStories(recap({ top_workout: dup, top_meal: dup }))
+    expect(cards.filter((c) => c.title === 'Morning run')).toHaveLength(1)
   })
 
   it('skips the kinds nobody posted rather than showing an empty card', () => {
     const ids2 = buildStories(recap({ top_tip: null, top_meal: null })).map((c) => c.id)
-    expect(ids2).toContain('top-post')
+    expect(ids2).toContain('top-workout')
     expect(ids2).not.toContain('top-tip')
     expect(ids2).not.toContain('top-meal')
+  })
+})
+
+// "It is better you show the reactions than just mention the number."
+describe('the reactions on a post card', () => {
+  const card = (r, id = 'top-workout') => buildStories(r).find((c) => c.id === id)
+
+  it('carries the emoji and their counts, not a total', () => {
+    expect(card(recap()).reactions).toEqual([
+      { emoji: '🔥', count: 3 },
+      { emoji: '💪', count: 1 },
+    ])
+  })
+
+  it('leads with the loudest one', () => {
+    const c = card(recap({
+      top_workout: { id: 'p2', title: 'x', author: 'a', reaction_emoji: { '💪': 1, '🤤': 5 } },
+    }))
+    expect(c.reactions[0]).toEqual({ emoji: '🤤', count: 5 })
+  })
+
+  it('drops any emoji sitting at zero', () => {
+    const c = card(recap({
+      top_workout: { id: 'p2', title: 'x', author: 'a', reaction_emoji: { '🔥': 2, '😅': 0 } },
+    }))
+    expect(c.reactions.map((r) => r.emoji)).toEqual(['🔥'])
+  })
+
+  it('is an empty list, not undefined, when the breakdown is missing', () => {
+    const c = card(recap({ top_workout: { id: 'p2', title: 'x', author: 'a' } }))
+    expect(c.reactions).toEqual([])
+  })
+})
+
+// A tip whose whole content is an Instagram video rendered as its title and
+// nothing else — a card reading "Dinner" for a video of somebody cooking.
+describe('a post that is a video', () => {
+  it('carries the video so the card can embed it', () => {
+    const card = buildStories(recap()).find((c) => c.id === 'top-tip')
+    expect(card.video).toBe('https://www.instagram.com/reel/abc/')
+  })
+
+  it('drops the placeholder emoji, because the video is the picture', () => {
+    const card = buildStories(recap()).find((c) => c.id === 'top-tip')
+    expect(card.emoji).toBeNull()
+  })
+
+  it('prefers a photo over a video when a post somehow has both', () => {
+    const card = buildStories(recap({
+      top_tip: { id: 'p4', title: 'x', author: 'a', photo_url: 'https://x/p.jpg', video_url: 'https://x/v' },
+    })).find((c) => c.id === 'top-tip')
+    expect(card.photo).toBe('https://x/p.jpg')
+    expect(card.video).toBeNull()
+  })
+
+  it('keeps the emoji for a post with neither', () => {
+    const card = buildStories(recap({
+      top_tip: { id: 'p4', title: 'Prep on Sunday', author: 'Sam' },
+    })).find((c) => c.id === 'top-tip')
+    expect(card.emoji).toBe('✨')
+    expect(card.video).toBeNull()
   })
 })
 
@@ -307,7 +373,7 @@ describe('the training card', () => {
 describe('a recap from the older shape', () => {
   const old = recap({
     training: undefined,
-    top_post: undefined, top_workout: undefined, top_meal: undefined, top_tip: undefined,
+    top_workout: undefined, top_meal: undefined, top_tip: undefined,
     top_posts: [
       { id: 'p1', title: 'Push day', author: 'Vic', reactions: 6 },
       { id: 'p2', title: 'Ceviche', author: 'María', reactions: 4 },

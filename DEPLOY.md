@@ -9,7 +9,7 @@ Total time: about 45 minutes, most of it waiting for DNS.
 
 ## Step 1b. Run the migrations (5 min — do this first)
 
-Thirteen migrations to run in **SQL Editor → New query**, **in order**.
+Fourteen migrations to run in **SQL Editor → New query**, **in order**.
 
 > ⚠️ Each file is idempotent on its own, but the ORDER matters and re-running
 > an early one alone is not harmless. `0002` and `0004` both define
@@ -58,8 +58,13 @@ Thirteen migrations to run in **SQL Editor → New query**, **in order**.
     rewrites `squad_recap()` to return the best post of each KIND plus what
     the squad trained. The old one returned the top three overall, so the
     story played three cards all captioned "Most loved".
+14. `0015_recap_posts.sql` — drops the overall "Most loved" pick (it was
+    usually the same meal as "Best plate", with nothing to tell them apart),
+    returns WHICH reactions each post got rather than only how many, and
+    includes `video_url` so a tip that is really a video shows the video
+    instead of just its title.
 
-Confirm all thirteen:
+Confirm all fourteen:
 
 ```sql
 select tgname from pg_trigger where tgname = 'on_auth_user_created';

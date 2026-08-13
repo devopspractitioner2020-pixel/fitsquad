@@ -1,47 +1,31 @@
 -- ============================================================
--- Fit Squad — migration 0014: a recap with more than one idea in it,
--- and a fifth reaction
+-- Fit Squad — migration 0015: recap cards that show the post
 --
--- Run after 0013. Idempotent.
+-- Run after 0014. Idempotent.
 --
--- THE RECAP PROBLEM
+-- THREE THINGS WRONG WITH THE LAST ONE
 --
--- `squad_recap()` returned the three most-reacted posts of the week and the
--- app rendered each with the same eyebrow, so the story played:
+-- 1. "Most loved" and "Best plate" were indistinguishable. 0014 returned the
+--    best post overall AND the best of each kind, so when the week's top post
+--    was a meal — which it usually is, most of what gets posted is food — the
+--    story showed two meal cards captioned "Most loved" and "Best plate" and
+--    no reader could say what separated them. The overall winner is dropped:
+--    three cards, one per kind, each unambiguous. The best meal IS the most
+--    loved meal; it does not need a second card saying so.
 --
---     MOST LOVED · Beef noodle stir fry
---     MOST LOVED · Dinner
---     MOST LOVED · Turkey, sweet potato and salad
+-- 2. "2 reactions" told you the number and hid the thing itself. Which two?
+--    🔥 and 🤤 say something a count cannot. The breakdown comes back now.
 --
--- Three cards claiming to be the top one. "Most loved" is a superlative and
--- there can only be one — repeating it three times is not a recap of a week,
--- it is the same card three times with different nouns.
---
--- So this returns the best post OF EACH KIND instead of the top three
--- overall, plus the training the squad actually did. Each card then says
--- something the others do not: one crowns the week's post, one is about the
--- gym, one is about a tip somebody shared, one is about the plate.
+-- 3. A tip whose content is an Instagram video rendered as its title and
+--    nothing else — a card reading "Dinner" for a post that was a video of
+--    somebody making dinner. `video_url` comes back so the card can show the
+--    actual embed rather than a word.
 -- ============================================================
 
--- ---------- A FIFTH REACTION ----------
--- 🤤 for the food, which is most of what gets posted and which the other
--- four had no good answer to.
-alter table public.reactions drop constraint if exists reactions_emoji_check;
-alter table public.reactions add constraint reactions_emoji_check
-  check (emoji in ('🔥', '💪', '👏', '😅', '🤤'));
-
-
--- ---------- THE RECAP ----------
--- NOTE: SUPERSEDED IN TURN by 0015_recap_posts.sql, which drops the overall
--- "Most loved" card (it duplicated whichever per-kind card won), returns WHICH
--- reactions a post got rather than only how many, and includes video_url so a
--- tip that is a video can show the video. Re-running this file on its own
--- reverts all three. If you re-run it, run 0015 afterwards.
---
--- This REPLACES the squad_recap() defined in 0012_edit_and_recap.sql.
--- `create or replace` means the last one to run wins, so re-running 0012 on
--- its own reverts the recap to three identical "Most loved" cards. If you
--- re-run it, run this file afterwards.
+-- NOTE: this REPLACES the squad_recap() from 0014_recap_variety.sql, which
+-- replaced 0012's. `create or replace` means the last one to run wins, so
+-- re-running either of those on its own reverts the recap. If you re-run one,
+-- run this file afterwards.
 create or replace function public.squad_recap(sid uuid, wk date default null)
 returns jsonb
 language plpgsql
@@ -90,14 +74,25 @@ begin
     from reactions r join week_posts wp on wp.id = r.post_id
     group by r.post_id
   ),
-  -- Every post with its reaction count, so the "best of" queries below can
-  -- each filter this one relation rather than repeating the join.
+  -- WHICH reactions, not just how many. `{"🔥": 2, "🤤": 1}`.
+  reaction_breakdown as (
+    select post_id, jsonb_object_agg(emoji, n) as by_emoji
+    from (
+      select r.post_id, r.emoji, count(*) as n
+      from reactions r join week_posts wp on wp.id = r.post_id
+      group by r.post_id, r.emoji
+    ) per_emoji
+    group by post_id
+  ),
   ranked as (
     select wp.id, wp.kind, wp.title, wp.name as author, wp.photo_url,
-           wp.minutes, wp.workout_type, wp.meal_tags, wp.is_cheat,
-           wp.created_at, coalesce(rc.n, 0) as reactions
+           wp.video_url, wp.minutes, wp.workout_type, wp.meal_tags,
+           wp.is_cheat, wp.created_at,
+           coalesce(rc.n, 0) as reactions,
+           coalesce(rb.by_emoji, '{}'::jsonb) as reaction_emoji
     from week_posts wp
     left join reaction_counts rc on rc.post_id = wp.id
+    left join reaction_breakdown rb on rb.post_id = wp.id
   ),
   totals as (
     select
@@ -110,7 +105,6 @@ begin
       (select count(*) from comments c join week_posts wp on wp.id = c.post_id) as comments,
       (select count(*) from members) as members
   ),
-  -- What the squad actually did in the gym, which the old recap never said.
   training as (
     select
       count(*) as sessions,
@@ -135,10 +129,6 @@ begin
       count(*) as readings
     from week_weighs
     group by user_id, name
-  ),
-  best_overall as (
-    select * from ranked where reactions > 0
-    order by reactions desc, created_at desc limit 1
   )
   select jsonb_build_object(
     'week_start', week_from,
@@ -162,34 +152,32 @@ begin
         order by delta asc limit 1
       ) x),
 
-    -- One superlative, one winner.
-    'top_post', (select to_jsonb(b) from best_overall b),
-
-    -- And then one of each kind, so the cards after it are about different
-    -- things rather than the same thing again. Each excludes whatever won
-    -- overall, so no post appears twice in one story.
+    -- One per kind, and NO overall winner. The best meal is already the
+    -- most-loved meal; a separate "Most loved" card for the same post under a
+    -- different name is the bug this migration exists to fix.
     'top_workout', (
       select to_jsonb(x) from (
-        select * from ranked
-        where kind = 'workout' and id is distinct from (select id from best_overall)
+        select * from ranked where kind = 'workout' and reactions > 0
         order by reactions desc, created_at desc limit 1
       ) x),
     'top_meal', (
       select to_jsonb(x) from (
-        select * from ranked
-        where kind = 'meal' and id is distinct from (select id from best_overall)
+        select * from ranked where kind = 'meal' and reactions > 0
         order by reactions desc, created_at desc limit 1
       ) x),
     'top_tip', (
       select to_jsonb(x) from (
-        select * from ranked
-        where kind = 'tip' and id is distinct from (select id from best_overall)
+        select * from ranked where kind = 'tip' and reactions > 0
         order by reactions desc, created_at desc limit 1
       ) x),
 
-    -- Kept for anything still reading the old shape. The app no longer uses
-    -- it; removing a key from a jsonb payload is the kind of change that
-    -- breaks a client someone has not reloaded yet.
+    -- Kept so a browser still running the previous bundle does not lose its
+    -- story. Neither is used by the current client.
+    'top_post', (
+      select to_jsonb(x) from (
+        select * from ranked where reactions > 0
+        order by reactions desc, created_at desc limit 1
+      ) x),
     'top_posts', coalesce(
       (select jsonb_agg(to_jsonb(x)) from (
         select * from ranked where reactions > 0

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import VideoEmbed from './VideoEmbed'
 
 // A full-screen story player, in the shape everyone already knows from
 // Instagram: progress bars along the top, tap the right half to go forward,
@@ -39,7 +40,11 @@ export default function Stories({ cards, onClose, autoplay = true }) {
   // Auto-advance. A ticking interval rather than one long timeout because the
   // progress bar has to fill smoothly and pause has to be able to freeze it
   // mid-card rather than restarting it.
-  const still = autoplay && !paused && !prefersReducedMotion() && count > 0
+  //
+  // A card with a video never advances on its own: five seconds is not enough
+  // to watch anything, and yanking a video off screen mid-play is worse than
+  // asking for a tap.
+  const still = autoplay && !paused && !card?.video && !prefersReducedMotion() && count > 0
   useEffect(() => {
     if (!still) return undefined
     timer.current = setInterval(() => {
@@ -89,6 +94,12 @@ export default function Stories({ cards, onClose, autoplay = true }) {
         ))}
       </div>
 
+      {card.video && (
+        <p className="text-muted-2 text-[12px] text-center pt-2">
+          Paused — tap → when you are done
+        </p>
+      )}
+
       <div className="flex justify-end px-4 pt-3">
         <button
           onClick={onClose}
@@ -107,11 +118,18 @@ export default function Stories({ cards, onClose, autoplay = true }) {
       {/* Screen readers get the content as it changes; the visual card is
           decorative to them because the tap zones sit on top of it. */}
       <p className="sr-only" role="status" aria-live="polite">
-        {`${card.eyebrow}. ${card.title}. ${card.subtitle ?? ''} (${index + 1} of ${count})`}
+        {`${card.eyebrow}. ${card.title}. ${card.subtitle ?? ''}`}
+        {card.reactions?.length
+          ? ` Reactions: ${card.reactions.map((r) => `${r.count} ${r.emoji}`).join(', ')}.`
+          : ''}
+        {` (${index + 1} of ${count})`}
       </p>
 
-      {/* Tap zones. Real buttons: keyboard-reachable and announced. */}
-      <div className="absolute inset-0 top-16 flex">
+      {/* Tap zones. Real buttons: keyboard-reachable and announced.
+          `pointer-events-none` on the strip when a video is showing, so taps
+          reach the player instead of skipping the card — the two arrow
+          buttons below stay clickable for navigation. */}
+      <div className={`absolute inset-0 top-16 flex ${card.video ? 'pointer-events-none' : ''}`}>
         <button
           className="w-1/3 h-full"
           aria-label="Previous"
@@ -150,6 +168,14 @@ function Card({ card }) {
         />
       )}
 
+      {/* The post WAS the video. Showing its title alone produced cards
+          reading "Dinner" for an Instagram video of somebody making dinner. */}
+      {card.video && (
+        <div className="mb-4 pointer-events-auto">
+          <VideoEmbed url={card.video} />
+        </div>
+      )}
+
       <h2 className={`font-display font-800 leading-tight mb-2 ${
         card.kind === 'cover' ? 'text-[44px]' : 'text-[34px]'
       }`}>
@@ -157,6 +183,22 @@ function Card({ card }) {
       </h2>
 
       {card.subtitle && <p className="text-muted text-[17px]">{card.subtitle}</p>}
+
+      {/* Which reactions, not how many. "2 reactions" told you the number and
+          hid the thing itself. */}
+      {card.reactions?.length > 0 && (
+        <div className="flex gap-2 justify-center flex-wrap mt-4" data-testid="story-reactions">
+          {card.reactions.map((r) => (
+            <span
+              key={r.emoji}
+              className="flex items-center gap-1.5 rounded-full border border-line bg-card px-3 py-1.5"
+            >
+              <span className="text-[20px]" aria-hidden="true">{r.emoji}</span>
+              <span className="text-mint font-700 text-sm">{r.count}</span>
+            </span>
+          ))}
+        </div>
+      )}
 
       {card.stats?.length > 0 && (
         <div className="grid grid-cols-2 gap-3 mt-6">

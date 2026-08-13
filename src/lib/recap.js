@@ -95,20 +95,34 @@ export function buildStories(recap) {
   const cards = []
   const seen = new Set()
 
-  // Guards against the same post appearing twice under two headings. The SQL
-  // already excludes the overall winner from the per-kind picks, but a client
-  // reading an older response would not have that.
+  // Guards against the same post appearing twice under two headings.
   const postCard = (post, { id, eyebrow, emoji }) => {
     if (!post || seen.has(post.id)) return null
     seen.add(post.id)
+
+    // The reactions themselves, not a count of them. "2 reactions" tells you
+    // the number and hides the thing — 🔥 and 🤤 say something a number
+    // cannot. Ordered by count so the loudest one leads.
+    const reactions = Object.entries(post.reaction_emoji ?? {})
+      .map(([e, count]) => ({ emoji: e, count: Number(count) || 0 }))
+      .filter((r) => r.count > 0)
+      .sort((a, b) => b.count - a.count || a.emoji.localeCompare(b.emoji))
+
     return {
       id,
       kind: 'post',
       eyebrow,
-      emoji: post.photo_url ? null : emoji,
+      // The emoji is a stand-in for a picture. A card with a photo or a video
+      // has one, so it does not need a symbol as well.
+      emoji: post.photo_url || post.video_url ? null : emoji,
       title: post.title,
-      subtitle: `${post.author} · ${plural(post.reactions ?? 0, 'reaction')}`,
+      subtitle: post.author,
       photo: post.photo_url ?? null,
+      // A tip whose whole content is an Instagram video used to render as its
+      // title and nothing else — a card reading "Dinner" for a video of
+      // somebody making dinner. Now the card shows the video.
+      video: post.photo_url ? null : (post.video_url ?? null),
+      reactions,
     }
   }
 
@@ -181,19 +195,23 @@ export function buildStories(recap) {
     })
   }
 
-  // ONE superlative. "Most loved" three times over was three cards claiming
-  // to be the top one; the cards after it are about different things.
+  // One card per KIND, and no overall winner.
+  //
+  // The previous version had both, so when the week's top post was a meal —
+  // which it usually is, most of what gets posted is food — the story showed
+  // two meal cards captioned "Most loved" and "Best plate" and nothing
+  // distinguished them. The best meal already IS the most-loved meal.
   const picks = [
-    postCard(recap.top_post, { id: 'top-post', eyebrow: 'Most loved', emoji: '❤️‍🔥' }),
     postCard(recap.top_workout, { id: 'top-workout', eyebrow: 'Session of the week', emoji: '🏋️' }),
-    postCard(recap.top_meal, { id: 'top-meal', eyebrow: 'Best plate', emoji: '🍽️' }),
+    postCard(recap.top_meal, { id: 'top-meal', eyebrow: 'Plate of the week', emoji: '🍽️' }),
     postCard(recap.top_tip, { id: 'top-tip', eyebrow: 'Tip worth keeping', emoji: '✨' }),
   ].filter(Boolean)
 
-  // Falls back to the old shape so a response from before migration 0014
+  // Falls back to the older shapes so a response from before 0014 or 0015
   // still produces a story rather than a gap.
   if (!picks.length) {
-    for (const post of recap.top_posts ?? []) {
+    const legacy = recap.top_post ? [recap.top_post] : (recap.top_posts ?? [])
+    for (const post of legacy) {
       const card = postCard(post, { id: `post-${post.id}`, eyebrow: 'Most loved', emoji: '❤️‍🔥' })
       if (card) picks.push(card)
     }

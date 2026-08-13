@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+// The embed has its own suite; here it would drag in IntersectionObserver.
+vi.mock('../VideoEmbed', () => ({ default: ({ url }) => <div data-testid="embed">{url}</div> }))
+
 import Stories from '../Stories'
 
 const cards = [
@@ -171,5 +174,86 @@ describe('what a card can show', () => {
       />,
     )
     expect(screen.getByText('🏆')).toBeInTheDocument()
+  })
+})
+
+// "It is better you show the reactions than just mention the number."
+describe('reactions on a card', () => {
+  const withReactions = [{
+    id: 'p', kind: 'post', eyebrow: 'Plate of the week', title: 'Ceviche', subtitle: 'Diego',
+    reactions: [{ emoji: '🤤', count: 3 }, { emoji: '🔥', count: 1 }],
+  }]
+
+  it('shows each emoji with its own count', () => {
+    render(<Stories cards={withReactions} onClose={vi.fn()} autoplay={false} />)
+    const row = screen.getByTestId('story-reactions')
+    expect(row).toHaveTextContent('3')
+    expect(row).toHaveTextContent('1')
+    expect(row.textContent).toContain('🤤')
+    expect(row.textContent).toContain('🔥')
+  })
+
+  it('does not print a bare total anywhere', () => {
+    render(<Stories cards={withReactions} onClose={vi.fn()} autoplay={false} />)
+    expect(screen.queryByText(/4 reactions/)).toBeNull()
+  })
+
+  it('reads them out to a screen reader', () => {
+    render(<Stories cards={withReactions} onClose={vi.fn()} autoplay={false} />)
+    expect(screen.getByRole('status')).toHaveTextContent('Reactions: 3 🤤, 1 🔥')
+  })
+
+  it('shows no row at all when a card has none', () => {
+    render(<Stories cards={[{ id: 'c', kind: 'cover', eyebrow: 'x', title: 'y' }]} onClose={vi.fn()} autoplay={false} />)
+    expect(screen.queryByTestId('story-reactions')).toBeNull()
+  })
+})
+
+// The card used to render the title alone — "Dinner" for an Instagram video
+// of somebody making dinner.
+describe('a card whose post is a video', () => {
+  const videoCard = [{
+    id: 'p', kind: 'post', eyebrow: 'Tip worth keeping', title: 'Dinner', subtitle: 'Kati',
+    video: 'https://www.instagram.com/reel/abc/',
+  }, { id: 'next', kind: 'outro', eyebrow: 'Next', title: 'Done' }]
+
+  it('embeds the video', () => {
+    render(<Stories cards={videoCard} onClose={vi.fn()} autoplay={false} />)
+    expect(screen.getByTestId('embed')).toHaveTextContent('https://www.instagram.com/reel/abc/')
+  })
+
+  // Five seconds is not enough to watch anything, and pulling a video off
+  // screen mid-play is worse than asking for a tap.
+  it('does not auto-advance past it', async () => {
+    vi.useFakeTimers()
+    render(<Stories cards={videoCard} onClose={vi.fn()} />)
+
+    await act(async () => { vi.advanceTimersByTime(20000) })
+    expect(screen.getByText('Dinner')).toBeInTheDocument()
+  })
+
+  it('says why it is paused', () => {
+    render(<Stories cards={videoCard} onClose={vi.fn()} />)
+    expect(screen.getByText(/paused/i)).toBeInTheDocument()
+  })
+
+  it('still advances by tap and by keyboard', async () => {
+    render(<Stories cards={videoCard} onClose={vi.fn()} autoplay={false} />)
+    await userEvent.keyboard('{ArrowRight}')
+    expect(screen.getByText('Done')).toBeInTheDocument()
+  })
+
+  it('resumes auto-advance on the next card', async () => {
+    vi.useFakeTimers()
+    const onClose = vi.fn()
+    render(<Stories cards={videoCard} onClose={onClose} />)
+
+    await act(async () => { vi.advanceTimersByTime(10000) })
+    expect(screen.getByText('Dinner')).toBeInTheDocument()
+
+    // Move past the video by hand; the outro then times out on its own.
+    await act(async () => { screen.getByRole('button', { name: 'Next' }).click() })
+    await act(async () => { vi.advanceTimersByTime(5200) })
+    expect(onClose).toHaveBeenCalled()
   })
 })
