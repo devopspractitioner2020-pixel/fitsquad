@@ -1,34 +1,27 @@
 -- ============================================================
--- Fit Squad — migration 0015: recap cards that show the post
+-- Fit Squad — migration 0016: cheater of the week
 --
--- Run after 0014. Idempotent.
+-- Run after 0015. Idempotent.
 --
--- THREE THINGS WRONG WITH THE LAST ONE
+-- The recap only ever celebrated the virtuous: most consistent, biggest
+-- drop, best session, best plate. The cheat meals were a number in the
+-- totals grid and nothing else, which is a waste — the pizza is the part
+-- the group chat actually talks about.
 --
--- 1. "Most loved" and "Best plate" were indistinguishable. 0014 returned the
---    best post overall AND the best of each kind, so when the week's top post
---    was a meal — which it usually is, most of what gets posted is food — the
---    story showed two meal cards captioned "Most loved" and "Best plate" and
---    no reader could say what separated them. The overall winner is dropped:
---    three cards, one per kind, each unambiguous. The best meal IS the most
---    loved meal; it does not need a second card saying so.
+-- So: `cheater`, the member with the most cheat posts in the week, plus up
+-- to FOUR of that week's cheat posts from them for a collage. Photos first,
+-- because a collage of titles is not a collage.
 --
--- 2. "2 reactions" told you the number and hid the thing itself. Which two?
---    🔥 and 🤤 say something a count cannot. The breakdown comes back now.
---
--- 3. A tip whose content is an Instagram video rendered as its title and
---    nothing else — a card reading "Dinner" for a post that was a video of
---    somebody making dinner. `video_url` comes back so the card can show the
---    actual embed rather than a word.
+-- It is affectionate, not a scolding. Nobody is ranked below anybody; there
+-- is exactly one name and it is the person who had the most fun. If nobody
+-- logged a cheat, the key comes back null and the story simply has one card
+-- fewer — the same rule every other card follows.
 -- ============================================================
 
--- NOTE: this REPLACES the squad_recap() from 0014_recap_variety.sql, which
--- replaced 0012's. `create or replace` means the last one to run wins, so
--- re-running either of those on its own reverts the recap. If you re-run one,
--- run this file afterwards.
---
--- ⚠️ SUPERSEDED IN TURN by 0016_cheater_of_the_week.sql, which adds the
--- `cheater` key. Re-running THIS file on its own drops it. Finish with 0016.
+-- NOTE: this REPLACES the squad_recap() from 0015_recap_posts.sql, which
+-- replaced 0014's, which replaced 0012's. `create or replace` means the last
+-- one to run wins, so re-running any earlier one on its own reverts the
+-- recap. If you re-run an earlier file, run this one afterwards.
 create or replace function public.squad_recap(sid uuid, wk date default null)
 returns jsonb
 language plpgsql
@@ -97,6 +90,25 @@ begin
     left join reaction_counts rc on rc.post_id = wp.id
     left join reaction_breakdown rb on rb.post_id = wp.id
   ),
+  -- The cheat meals of the week, and who ate them.
+  cheat_posts as (
+    select wp.id, wp.user_id, wp.name, wp.title, wp.photo_url, wp.created_at
+    from week_posts wp
+    where wp.is_cheat
+  ),
+  cheat_counts as (
+    select user_id, name, count(*) as cheats
+    from cheat_posts
+    group by user_id, name
+  ),
+  -- One winner. Ties break on name so the same week always produces the
+  -- same story rather than whichever row the planner happened to emit first.
+  cheater as (
+    select user_id, name, cheats
+    from cheat_counts
+    order by cheats desc, name
+    limit 1
+  ),
   totals as (
     select
       (select count(*) from week_posts where kind = 'workout') as workouts,
@@ -155,9 +167,35 @@ begin
         order by delta asc limit 1
       ) x),
 
+    -- Cheater of the week, with the evidence. At most four posts: a collage
+    -- of five thumbnails on a phone is five things nobody can see. Ones with
+    -- a photo come first — a collage tile with no picture is a blank square.
+    'cheater', (
+      select jsonb_build_object(
+        'name', c.name,
+        'count', c.cheats,
+        -- `rn` carries the order THROUGH the aggregate and is then stripped
+        -- back out: a bare jsonb_agg over an ordered subquery happens to come
+        -- out in order today, but nothing in the language promises it.
+        'posts', coalesce((
+          select jsonb_agg(to_jsonb(x) - 'rn' order by x.rn)
+          from (
+            select cp.id, cp.title, cp.photo_url, cp.created_at,
+                   row_number() over (
+                     order by (cp.photo_url is null), cp.created_at desc
+                   ) as rn
+            from cheat_posts cp
+            where cp.user_id = c.user_id
+            order by (cp.photo_url is null), cp.created_at desc
+            limit 4
+          ) x), '[]'::jsonb)
+      )
+      from cheater c
+      where c.cheats > 0),
+
     -- One per kind, and NO overall winner. The best meal is already the
     -- most-loved meal; a separate "Most loved" card for the same post under a
-    -- different name is the bug this migration exists to fix.
+    -- different name is the bug 0015 exists to fix.
     'top_workout', (
       select to_jsonb(x) from (
         select * from ranked where kind = 'workout' and reactions > 0

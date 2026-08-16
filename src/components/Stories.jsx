@@ -160,6 +160,8 @@ function Card({ card }) {
         />
       )}
 
+      {card.photos?.length > 0 && <Collage photos={card.photos} />}
+
       <h2 className={`font-display font-800 leading-tight mb-2 ${
         card.kind === 'cover' ? 'text-[44px]' : 'text-[34px]'
       }`}>
@@ -195,5 +197,42 @@ function Card({ card }) {
         </div>
       )}
     </>
+  )
+}
+
+// Up to four pictures in one frame, for the cheat-meal card.
+//
+// The layout changes with the count rather than forcing everything into a
+// 2×2 grid: one photo alone in a four-cell grid is a picture with three
+// holes punched next to it, and three photos in a 2×2 leaves one. So one
+// runs full width, two split it, three put the newest across the top with
+// two beneath, and four fill the square.
+function Collage({ photos }) {
+  const shown = photos.slice(0, 4)
+  const n = shown.length
+
+  // Heights are fixed rather than aspect-driven: a story card has a fixed
+  // budget of vertical space, and a tall portrait photo would otherwise push
+  // the name and the caption off the bottom of the screen.
+  const cell = n === 1 ? 'h-56' : n === 2 ? 'h-44' : 'h-28'
+
+  return (
+    <div
+      className={`grid gap-1.5 mb-4 ${n === 1 ? 'grid-cols-1' : 'grid-cols-2'}`}
+      data-testid="story-collage"
+    >
+      {shown.map((src, i) => (
+        <img
+          key={src}
+          src={src}
+          alt=""
+          className={`w-full ${cell} object-cover rounded-xl2 border border-line ${
+            // Three photos: the first spans both columns so nothing is left
+            // as an empty cell.
+            n === 3 && i === 0 ? 'col-span-2 h-32' : ''
+          }`}
+        />
+      ))}
+    </div>
   )
 }

@@ -9,7 +9,7 @@ Total time: about 45 minutes, most of it waiting for DNS.
 
 ## Step 1b. Run the migrations (5 min — do this first)
 
-Fourteen migrations to run in **SQL Editor → New query**, **in order**.
+Fifteen migrations to run in **SQL Editor → New query**, **in order**.
 
 > ⚠️ Each file is idempotent on its own, but the ORDER matters and re-running
 > an early one alone is not harmless. `0002` and `0004` both define
@@ -63,8 +63,13 @@ Fourteen migrations to run in **SQL Editor → New query**, **in order**.
     returns WHICH reactions each post got rather than only how many, and
     includes `video_url` so a tip that is really a video shows the video
     instead of just its title.
+15. `0016_cheater_of_the_week.sql` — adds `cheater` to the recap: whoever
+    logged the most cheat meals that week, plus up to four of those posts so
+    the story can show a collage. The cheat meals used to be a number in a
+    grid and nothing else. **This is the newest `squad_recap()`** — if you
+    ever re-run `0012`, `0014` or `0015`, finish by running this one.
 
-Confirm all fourteen:
+Confirm all fifteen:
 
 ```sql
 select tgname from pg_trigger where tgname = 'on_auth_user_created';
@@ -105,6 +110,12 @@ select column_name from information_schema.columns
 -- picks. Both come from 0014.
 select pg_get_constraintdef(oid) as reactions_emoji_check
 from pg_constraint where conname = 'reactions_emoji_check';
+
+-- 0016 must be the squad_recap() that is actually installed. `t` means the
+-- cheater-of-the-week card will have data; `f` means an older migration was
+-- run after it and won, so re-run 0016.
+select prosrc like '%cheater%' as has_cheater_of_the_week
+from pg_proc where proname = 'squad_recap';
 ```
 
 ### The weekly recap, and why there is no cron job
@@ -584,9 +595,18 @@ and `--target` set where the trend begins and where it is heading.
 
 ```bash
 npm install
-npm run test     # 207 tests, should be green before you deploy anything
+npm run test     # 937 tests, should be green before you deploy anything
+npm run test:sql # applies every migration to a throwaway database (optional)
 npm run dev
 ```
+
+`npm run test:sql` starts a temporary PostgreSQL, loads `schema.sql` and every
+migration **in order**, then calls the functions the app calls and checks what
+comes back. It is how the signup-into-a-squad path and the weekly recap get
+verified without deploying anything, and it deletes the database when it
+finishes. If you have no local PostgreSQL it prints a notice and passes, so it
+never blocks a deploy — install one (`brew install postgresql@16`) to have the
+migrations checked before they reach the live project.
 
 Open the printed URL (usually `http://localhost:5173`).
 
@@ -767,7 +787,7 @@ is nothing to upload until Vite has written it. Run both halves:
 npm run deploy
 ```
 
-which is exactly `npm run test && npm run build && npx wrangler deploy`. Use the script rather than typing the commands: the `&&`
+which is exactly `npm run test && npm run test:sql && npm run build && npx wrangler deploy`. Use the script rather than typing the commands: the `&&`
 chain is what stops a red test suite or a failed build from silently shipping
 the *previous* build's `dist/` to production, and it is the easiest thing to
 leave out by hand.

@@ -423,3 +423,99 @@ describe('a recap from the older shape', () => {
     expect(() => buildStories(old)).not.toThrow()
   })
 })
+
+// "In the stories can you add for example 'the cheater of the week', the ones
+// with more cheats, and you can include like a collage of a maximum of 4
+// cheat posts of that person that week."
+describe('cheater of the week', () => {
+  const withCheater = (over = {}) => recap({
+    cheater: {
+      name: 'Vic',
+      count: 3,
+      posts: [
+        { id: 'c1', title: 'Pizza', photo_url: 'https://x/1.jpg' },
+        { id: 'c2', title: 'Burger', photo_url: 'https://x/2.jpg' },
+        { id: 'c3', title: 'Alfajores', photo_url: 'https://x/3.jpg' },
+      ],
+      ...over,
+    },
+  })
+  const card = (r) => buildStories(r).find((c) => c.id === 'cheater')
+
+  it('crowns the member with the most cheat meals', () => {
+    expect(card(withCheater()).title).toBe('Vic')
+    expect(card(withCheater()).eyebrow).toBe('Cheater of the week')
+  })
+
+  it('counts the cheats in the subtitle, pluralised', () => {
+    expect(card(withCheater()).subtitle).toMatch(/^3 cheat meals/)
+    expect(card(withCheater({ count: 1 })).subtitle).toMatch(/^1 cheat meal,/)
+  })
+
+  // Affectionate, not a scolding. Nobody is going to enjoy a story that
+  // tells them off once a week.
+  it('is teasing rather than judgemental', () => {
+    expect(card(withCheater()).subtitle).toMatch(/worth every bite/i)
+  })
+
+  it('collects the photos for a collage', () => {
+    expect(card(withCheater()).photos).toEqual([
+      'https://x/1.jpg', 'https://x/2.jpg', 'https://x/3.jpg',
+    ])
+  })
+
+  // The ask was explicit: a maximum of four.
+  it('caps the collage at four, however many the server sends', () => {
+    const many = Array.from({ length: 9 }, (_, i) => ({ id: `c${i}`, photo_url: `https://x/${i}.jpg` }))
+    expect(card(withCheater({ posts: many })).photos).toHaveLength(4)
+  })
+
+  it('skips cheat posts that have no photo rather than leaving a blank tile', () => {
+    const mixed = [
+      { id: 'c1', title: 'Pizza', photo_url: 'https://x/1.jpg' },
+      { id: 'c2', title: 'A beer, unphotographed', photo_url: null },
+    ]
+    expect(card(withCheater({ posts: mixed })).photos).toEqual(['https://x/1.jpg'])
+  })
+
+  // The emoji is a stand-in for a picture, exactly as on a post card.
+  it('falls back to an emoji when nobody photographed their cheat', () => {
+    const none = card(withCheater({ posts: [{ id: 'c1', title: 'Pizza', photo_url: null }] }))
+    expect(none.photos).toEqual([])
+    expect(none.emoji).toBe('🍕')
+  })
+
+  it('drops the emoji when there are photos, so it does not sit on top of them', () => {
+    expect(card(withCheater()).emoji).toBeNull()
+  })
+
+  // Every card earns its place.
+  it('is absent when nobody cheated', () => {
+    expect(card(recap())).toBeUndefined()
+    expect(card(withCheater({ count: 0, posts: [] }))).toBeUndefined()
+    expect(card(recap({ cheater: null }))).toBeUndefined()
+  })
+
+  it('is absent when the server is older and sends no cheater at all', () => {
+    expect(() => buildStories(recap())).not.toThrow()
+    expect(buildStories(recap()).map((c) => c.id)).not.toContain('cheater')
+  })
+
+  it('survives a cheater with no posts array', () => {
+    const c = card(recap({ cheater: { name: 'Vic', count: 2 } }))
+    expect(c.photos).toEqual([])
+    expect(c.title).toBe('Vic')
+  })
+
+  it('lands between the picks and the outro, not at the very end', () => {
+    const ids2 = buildStories(withCheater()).map((c) => c.id)
+    expect(ids2.indexOf('cheater')).toBeGreaterThan(ids2.indexOf('top-meal'))
+    expect(ids2.indexOf('cheater')).toBeLessThan(ids2.indexOf('outro'))
+  })
+
+  it('keeps every id and eyebrow unique with the card in place', () => {
+    const cards = buildStories(withCheater())
+    expect(new Set(cards.map((c) => c.id)).size).toBe(cards.length)
+    expect(new Set(cards.map((c) => c.eyebrow)).size).toBe(cards.length)
+  })
+})

@@ -245,3 +245,72 @@ describe('nothing blocks the way forward', () => {
     expect(screen.queryByTestId('embed')).toBeNull()
   })
 })
+
+// The cheat-meal card is the only one that shows more than one picture.
+describe('the cheat collage', () => {
+  const collage = (photos) => [{
+    id: 'cheater', kind: 'collage', eyebrow: 'Cheater of the week',
+    title: 'Vic', subtitle: '3 cheat meals, and worth every bite', photos,
+  }]
+  const imgs = () => Array.from(document.querySelectorAll('[data-testid="story-collage"] img'))
+
+  it('shows every picture it is given', () => {
+    render(<Stories cards={collage(['https://x/1.jpg', 'https://x/2.jpg', 'https://x/3.jpg'])}
+      onClose={vi.fn()} autoplay={false} />)
+    expect(imgs().map((i) => i.getAttribute('src')))
+      .toEqual(['https://x/1.jpg', 'https://x/2.jpg', 'https://x/3.jpg'])
+  })
+
+  it('never renders more than four, whatever it is handed', () => {
+    const many = Array.from({ length: 7 }, (_, i) => `https://x/${i}.jpg`)
+    render(<Stories cards={collage(many)} onClose={vi.fn()} autoplay={false} />)
+    expect(imgs()).toHaveLength(4)
+  })
+
+  // Decorative: the name and the caption beside them already say what they
+  // are, and seven "image" announcements in a row is noise.
+  it('leaves the pictures out of the accessibility tree', () => {
+    render(<Stories cards={collage(['https://x/1.jpg', 'https://x/2.jpg'])} onClose={vi.fn()} autoplay={false} />)
+    imgs().forEach((i) => expect(i).toHaveAttribute('alt', ''))
+  })
+
+  it('still names the cheater and the count', () => {
+    render(<Stories cards={collage(['https://x/1.jpg'])} onClose={vi.fn()} autoplay={false} />)
+    // Twice over: once on the card, once in the live region for a screen
+    // reader. Both are wanted.
+    expect(screen.getAllByText('Vic').length).toBeGreaterThan(0)
+    expect(screen.getAllByText(/3 cheat meals/).length).toBe(2)
+  })
+
+  it('reads out to a screen reader like any other card', () => {
+    render(<Stories cards={collage(['https://x/1.jpg'])} onClose={vi.fn()} autoplay={false} />)
+    expect(screen.getByRole('status')).toHaveTextContent('Cheater of the week')
+    expect(screen.getByRole('status')).toHaveTextContent('Vic')
+  })
+
+  it('shows a single photo on its own rather than in an empty grid', () => {
+    render(<Stories cards={collage(['https://x/1.jpg'])} onClose={vi.fn()} autoplay={false} />)
+    expect(screen.getByTestId('story-collage').className).toContain('grid-cols-1')
+  })
+
+  it('splits two or more across columns', () => {
+    render(<Stories cards={collage(['https://x/1.jpg', 'https://x/2.jpg'])} onClose={vi.fn()} autoplay={false} />)
+    expect(screen.getByTestId('story-collage').className).toContain('grid-cols-2')
+  })
+
+  it('shows no collage at all on a card without photos', () => {
+    render(<Stories cards={[{ id: 'c', kind: 'collage', eyebrow: 'x', title: 'y', photos: [] }]}
+      onClose={vi.fn()} autoplay={false} />)
+    expect(screen.queryByTestId('story-collage')).toBeNull()
+  })
+
+  // The stuck-video bug, again: a card with something interactive on it must
+  // not swallow the way forward.
+  it('does not block advancing past it', async () => {
+    const cards2 = [...collage(['https://x/1.jpg', 'https://x/2.jpg']),
+      { id: 'outro', kind: 'outro', eyebrow: 'Next week', title: 'Done' }]
+    render(<Stories cards={cards2} onClose={vi.fn()} autoplay={false} />)
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }))
+    expect(screen.getByText('Done')).toBeInTheDocument()
+  })
+})

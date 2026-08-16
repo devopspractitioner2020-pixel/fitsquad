@@ -224,6 +224,36 @@ export function buildStories(recap) {
   }
   cards.push(...picks)
 
+  // Cheater of the week. The recap only ever celebrated the virtuous — most
+  // consistent, biggest drop, best plate — and the cheat meals were a number
+  // in a grid, when they are the part the group chat actually talks about.
+  //
+  // Affectionate, not a scolding: one name, no ranking of anyone below them,
+  // and the joke is carried by the pictures rather than by the caption.
+  const ch = recap.cheater
+  const cheats = Number(ch?.count ?? 0)
+  if (ch?.name && cheats > 0) {
+    // At most four. The server already orders photos first and caps it, but
+    // the client caps too — a story that grows a fifth tile because someone
+    // changed the SQL is a layout bug nobody would think to look for here.
+    const photos = (ch.posts ?? [])
+      .map((p) => p?.photo_url)
+      .filter(Boolean)
+      .slice(0, 4)
+
+    cards.push({
+      id: 'cheater',
+      kind: 'collage',
+      eyebrow: 'Cheater of the week',
+      title: ch.name,
+      subtitle: `${plural(cheats, 'cheat meal')}, and worth every bite`,
+      // Same rule as a post card: the pictures ARE the card, so an emoji on
+      // top of them is clutter. It only stands in when there is no photo.
+      emoji: photos.length ? null : '🍕',
+      photos,
+    })
+  }
+
   if ((t.reactions ?? 0) + (t.comments ?? 0) > 0) {
     cards.push({
       id: 'engagement',
