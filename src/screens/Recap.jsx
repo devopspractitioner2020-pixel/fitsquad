@@ -5,7 +5,7 @@ import { useAuth } from '../context/AuthContext'
 import { Header } from '../components/ui'
 import Stories from '../components/Stories'
 import {
-  getRecap, buildStories, hasContent, lastWeekKey, weekLabel, availableAt, isReady,
+  getRecap, buildStories, hasContent, currentRecapKey, weekLabel, availableAt, isReady,
 } from '../lib/recap'
 
 // The weekly recap, opened as stories.
@@ -19,7 +19,7 @@ export default function Recap() {
   const nav = useNavigate()
   const [state, setState] = useState('loading')
   const [cards, setCards] = useState([])
-  const [key, setKey] = useState(() => lastWeekKey())
+  const [key, setKey] = useState(() => currentRecapKey())
   const [err, setErr] = useState('')
 
   useEffect(() => {
@@ -33,7 +33,12 @@ export default function Recap() {
         const squad = (squads ?? [])[0]
         if (!squad) { if (!cancelled) setState('no-squad'); return }
 
-        const wk = lastWeekKey()
+        // The newest week that has actually opened. This used to be
+        // `lastWeekKey()` — always the week before this one — so on Sunday
+        // evening, when the week that had just ended unlocked, the screen was
+        // still showing the week before it and the new recap did not turn up
+        // until Monday.
+        const wk = currentRecapKey()
         setKey(wk)
         const recap = await getRecap(squad.id, wk)
         if (cancelled) return
@@ -74,8 +79,8 @@ export default function Recap() {
             <div className="text-[44px] mb-2" aria-hidden="true">🍿</div>
             <p className="font-display text-[22px] font-700 mb-2">Not out yet</p>
             <p className="text-muted">
-              This week’s recap lands on Sunday at 6pm. Keep logging — what you do
-              between now and then is what it is made of.
+              This week’s recap lands on Sunday evening. Keep logging — what you
+              do between now and then is what it is made of.
             </p>
             <p className="text-muted-2 text-[12px] mt-3">
               Ready {availableAt(key).toLocaleString(undefined, { weekday: 'long', hour: 'numeric', minute: '2-digit' })}

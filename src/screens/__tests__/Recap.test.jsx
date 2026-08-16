@@ -76,7 +76,7 @@ describe('a week that is not out yet', () => {
     await renderRecap()
 
     expect(await screen.findByText(/not out yet/i)).toBeInTheDocument()
-    expect(screen.getByText(/sunday at 6pm/i)).toBeInTheDocument()
+    expect(screen.getByText(/sunday evening/i)).toBeInTheDocument()
   })
 
   it('does not open the story player on an empty recap', async () => {

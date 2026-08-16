@@ -227,3 +227,55 @@ begin
 end $$;
 
 select 'sql tests passed' as result;
+
+-- ---------- The unlock is six in the EVENING, not 18:00 UTC ----------
+--
+-- 0017. It used to be UTC, which is 8pm in Stuttgart and 1pm in Lima.
+do $$
+begin
+  -- Summer: Berlin is UTC+2, so Sunday 18:00 local is 16:00 UTC.
+  assert public.recap_available_at('2026-08-10') = '2026-08-16 16:00+00'::timestamptz,
+    format('summer unlock is %s, expected 16:00Z', public.recap_available_at('2026-08-10'));
+  -- Winter: UTC+1, so 17:00 UTC. A fixed offset would have got one of these
+  -- wrong by an hour for half the year.
+  assert public.recap_available_at('2026-01-05') = '2026-01-11 17:00+00'::timestamptz,
+    format('winter unlock is %s, expected 17:00Z', public.recap_available_at('2026-01-05'));
+  -- The Sundays the clocks actually move, which is where an offset computed
+  -- once and reused goes wrong.
+  assert public.recap_available_at('2026-03-23') = '2026-03-29 16:00+00'::timestamptz,
+    'the spring-forward Sunday does not open at 18:00 local';
+  assert public.recap_available_at('2026-10-19') = '2026-10-25 17:00+00'::timestamptz,
+    'the autumn-back Sunday does not open at 18:00 local';
+
+  -- Both halves say the same thing: it is always 18:00 on the clock in the
+  -- room, whatever the offset happens to be that week.
+  assert to_char(public.recap_available_at('2026-08-10') at time zone 'Europe/Berlin', 'Dy HH24:MI') = 'Sun 18:00',
+    'summer: not Sunday at 18:00 local';
+  assert to_char(public.recap_available_at('2026-01-05') at time zone 'Europe/Berlin', 'Dy HH24:MI') = 'Sun 18:00',
+    'winter: not Sunday at 18:00 local';
+end $$;
+
+-- The week that ends this evening opens this evening — the whole point of
+-- the schedule, and what the client was getting wrong by asking for the week
+-- before instead.
+do $$
+declare
+  sid uuid;
+  this_week date := public.week_start(now());
+begin
+  select squad_id into sid from public.squad_members
+  where user_id = '11111111-1111-1111-1111-111111111111';
+  perform set_config('test.uid', '11111111-1111-1111-1111-111111111111', true);
+
+  if now() >= public.recap_available_at(this_week) then
+    assert public.squad_recap(sid, this_week) is not null,
+      'the week that has already opened came back null';
+  else
+    assert public.squad_recap(sid, this_week) is null,
+      'the current week opened before its Sunday evening';
+  end if;
+
+  -- Last week is always open, whatever day it is.
+  assert public.squad_recap(sid, (this_week - 7)::date) is not null,
+    'last week is not readable';
+end $$;

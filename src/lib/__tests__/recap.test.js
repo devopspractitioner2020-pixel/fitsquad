@@ -4,8 +4,8 @@ const rpc = vi.fn()
 vi.mock('../supabase', () => ({ supabase: { rpc: (...a) => rpc(...a) } }))
 
 const {
-  weekStart, weekKey, lastWeekKey, availableAt, isReady, weekLabel,
-  getRecap, buildStories,
+  weekStart, weekKey, lastWeekKey, currentRecapKey, nextRecapAt,
+  availableAt, isReady, weekLabel, getRecap, buildStories,
 } = await import('../recap')
 
 beforeEach(() => rpc.mockReset())
@@ -38,17 +38,38 @@ describe('the week boundary', () => {
 })
 
 describe('when a recap opens', () => {
-  // Sunday at 6pm, as asked for.
-  it('is Sunday 18:00 UTC of that week', () => {
-    expect(availableAt('2026-07-27').toISOString()).toBe('2026-08-02T18:00:00.000Z')
+  // Sunday at 6pm — six in the EVENING, which it was not when the gate was
+  // 18:00 UTC: that is 8pm in Stuttgart and 1pm in Lima, so it was nobody's
+  // six. Europe/Berlin, matching recap_available_at() in migration 0017.
+  const localClock = (d) =>
+    d.toLocaleString('en-GB', { timeZone: 'Europe/Berlin', weekday: 'short', hour: '2-digit', minute: '2-digit' })
+
+  it('is Sunday at 18:00 in the squad\'s own time, in summer', () => {
+    expect(availableAt('2026-07-27').toISOString()).toBe('2026-08-02T16:00:00.000Z')
+    expect(localClock(availableAt('2026-07-27'))).toMatch(/Sun.*18:00/)
+  })
+
+  // A fixed offset would be an hour out for half the year. This is the half.
+  it('is Sunday at 18:00 in winter too, when the offset is different', () => {
+    expect(availableAt('2026-01-05').toISOString()).toBe('2026-01-11T17:00:00.000Z')
+    expect(localClock(availableAt('2026-01-05'))).toMatch(/Sun.*18:00/)
+  })
+
+  // The two Sundays a year the clocks move are exactly where computing the
+  // offset once and reusing it goes wrong.
+  it('holds on the Sundays the clocks change', () => {
+    expect(availableAt('2026-03-23').toISOString()).toBe('2026-03-29T16:00:00.000Z')
+    expect(availableAt('2026-10-19').toISOString()).toBe('2026-10-25T17:00:00.000Z')
+    expect(localClock(availableAt('2026-03-23'))).toMatch(/Sun.*18:00/)
+    expect(localClock(availableAt('2026-10-19'))).toMatch(/Sun.*18:00/)
   })
 
   it('is not ready a minute before', () => {
-    expect(isReady('2026-07-27', new Date('2026-08-02T17:59:00Z'))).toBe(false)
+    expect(isReady('2026-07-27', new Date('2026-08-02T15:59:00Z'))).toBe(false)
   })
 
   it('is ready on the minute, and stays ready', () => {
-    expect(isReady('2026-07-27', new Date('2026-08-02T18:00:00Z'))).toBe(true)
+    expect(isReady('2026-07-27', new Date('2026-08-02T16:00:00Z'))).toBe(true)
     expect(isReady('2026-07-27', new Date('2026-12-01T00:00:00Z'))).toBe(true)
   })
 
@@ -517,5 +538,68 @@ describe('cheater of the week', () => {
     const cards = buildStories(withCheater())
     expect(new Set(cards.map((c) => c.id)).size).toBe(cards.length)
     expect(new Set(cards.map((c) => c.eyebrow)).size).toBe(cards.length)
+  })
+})
+
+// THE BUG A READER REPORTED: "today the stories of the week were supposed to
+// be created at 6pm, but it didn't happen."
+//
+// Nothing had failed. There is no job to fail — the recap is computed on
+// demand. The screen was asking for `lastWeekKey()`, always the week BEFORE
+// the current one, so on Sunday evening, when the week that had just ended
+// opened, the app was still showing the week before it. The new recap only
+// appeared on Monday, when the key rolled over.
+describe('which week the app should be showing', () => {
+  // Sunday 16 Aug 2026. The week Mon 10 – Sun 16 opens at 18:00 Berlin,
+  // which is 16:00 UTC that day.
+  const before = new Date('2026-08-16T15:30:00Z')
+  const after = new Date('2026-08-16T16:30:00Z')
+
+  it('switches to the week that just ended, the moment it opens', () => {
+    expect(currentRecapKey(after)).toBe('2026-08-10')
+  })
+
+  it('is still the previous week an hour earlier', () => {
+    expect(currentRecapKey(before)).toBe('2026-08-03')
+  })
+
+  it('stays on that week all through the following week', () => {
+    for (const day of ['17', '18', '20', '22']) {
+      expect(currentRecapKey(new Date(`2026-08-${day}T09:00:00Z`))).toBe('2026-08-10')
+    }
+  })
+
+  // The regression in one line: whatever it picks must be a week the server
+  // will actually open, and it must never be older than it has to be.
+  it('never asks for a week the server would refuse', () => {
+    for (let h = 0; h < 24 * 9; h += 1) {
+      const now = new Date(Date.UTC(2026, 7, 10, h))
+      expect(isReady(currentRecapKey(now), now)).toBe(true)
+    }
+  })
+
+  it('is never more than one week behind', () => {
+    for (let h = 0; h < 24 * 9; h += 1) {
+      const now = new Date(Date.UTC(2026, 7, 10, h))
+      expect(currentRecapKey(now)).toBe(isReady(weekKey(now), now) ? weekKey(now) : lastWeekKey(now))
+    }
+  })
+
+  // What it used to do, kept as a description of the fault rather than of
+  // the fix: on Sunday evening the old key was a week stale.
+  it('differs from the old lastWeekKey() exactly on Sunday evening', () => {
+    expect(lastWeekKey(after)).toBe('2026-08-03')
+    expect(currentRecapKey(after)).not.toBe(lastWeekKey(after))
+    expect(currentRecapKey(before)).toBe(lastWeekKey(before))
+  })
+})
+
+describe('when the next recap lands', () => {
+  it('is this Sunday when the week is still running', () => {
+    expect(nextRecapAt(new Date('2026-08-13T09:00:00Z')).toISOString()).toBe('2026-08-16T16:00:00.000Z')
+  })
+
+  it('rolls on to the following Sunday once this one has opened', () => {
+    expect(nextRecapAt(new Date('2026-08-16T16:30:00Z')).toISOString()).toBe('2026-08-23T16:00:00.000Z')
   })
 })

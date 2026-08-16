@@ -8,7 +8,7 @@ import PostCard from '../components/PostCard'
 import { getSavedPostIds } from '../lib/saved'
 import { getReactions } from '../lib/reactions'
 import { getCommentCounts } from '../lib/comments'
-import { lastWeekKey, isReady, weekLabel } from '../lib/recap'
+import { currentRecapKey, isReady, weekLabel } from '../lib/recap'
 
 export default function Feed() {
   const { user, profile, signOut } = useAuth()
@@ -16,7 +16,7 @@ export default function Feed() {
   const { unseen } = useUnseenActivity(user?.id)
   // Recomputed on every render rather than stored: it flips once a week, and
   // a value in state would be stale for anyone who left the tab open.
-  const recapWeek = lastWeekKey()
+  const recapWeek = currentRecapKey()
   const recapReady = isReady(recapWeek)
   const [posts, setPosts] = useState([])
   const [savedIds, setSavedIds] = useState(() => new Set())

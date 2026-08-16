@@ -25,18 +25,69 @@ export const lastWeekKey = (value = new Date()) =>
   weekKey(new Date(weekStart(value).getTime() - DAY_MS))
 
 /**
- * When a week's recap unlocks: Sunday 18:00 UTC.
+ * The squad's clock. "Sunday at 6pm" has to mean six in the evening SOMEWHERE
+ * — it was 18:00 UTC, which is 8pm in Stuttgart and 1pm in Lima, so it was
+ * nobody's six. This is that somewhere.
+ */
+export const RECAP_TZ = 'Europe/Berlin'
+
+/** How far `tz` is ahead of UTC at a given instant, in ms. DST-aware. */
+function offsetMs(instant, tz) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz, hour12: false,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  }).formatToParts(instant)
+  const at = (type) => Number(parts.find((p) => p.type === type).value)
+  // Reading the local wall-clock back as if it were UTC gives the offset.
+  // `hour` comes back as 24 at midnight under hour12:false in some engines.
+  const asUtc = Date.UTC(at('year'), at('month') - 1, at('day'),
+    at('hour') % 24, at('minute'), at('second'))
+  return asUtc - instant.getTime()
+}
+
+/**
+ * When a week's recap unlocks: **Sunday 18:00 Europe/Berlin**.
  *
- * Deliberately the same rule as `recap_available_at` in SQL. The client uses
- * it only to decide what to SAY while waiting — the server enforces it, so a
- * clock skewed forward on someone's phone cannot open the week early.
+ * Deliberately the same rule as `recap_available_at` in SQL (migration 0017).
+ * The client uses it only to decide what week to ASK for and what to say
+ * while waiting — the server enforces it, so a clock skewed forward on
+ * someone's phone cannot open a week early.
+ *
+ * Two passes because a wall-clock time has to be resolved against the offset
+ * in force AT that time, which you do not know until you have placed it. One
+ * pass is wrong on the two Sundays a year the clocks move.
  */
 export function availableAt(key) {
   const monday = new Date(`${key}T00:00:00.000Z`)
-  return new Date(monday.getTime() + 6 * DAY_MS + 18 * 3600_000)
+  const wall = monday.getTime() + 6 * DAY_MS + 18 * 3600_000 // Sunday 18:00, naive
+  const once = wall - offsetMs(new Date(wall), RECAP_TZ)
+  return new Date(wall - offsetMs(new Date(once), RECAP_TZ))
 }
 
 export const isReady = (key, now = new Date()) => now >= availableAt(key)
+
+/**
+ * The week the recap screen should be showing right now.
+ *
+ * THE BUG THIS FIXES: the screen asked for `lastWeekKey()` — always the week
+ * before the current one. So on Sunday evening, when the week that had just
+ * finished unlocked, the app was still showing the week before it, and the
+ * new recap did not appear until Monday. "It lands Sunday at 6pm" was true
+ * of the database and false of the app.
+ *
+ * So: the most recent week that has actually opened. From Sunday 6pm that is
+ * the week ending that evening; for the rest of the week it is the one
+ * before, which is what was being shown all along.
+ */
+export function currentRecapKey(now = new Date()) {
+  const thisWeek = weekKey(now)
+  return isReady(thisWeek, now) ? thisWeek : lastWeekKey(now)
+}
+
+/** When the next recap opens, from `now`. Used to say so on screen. */
+export const nextRecapAt = (now = new Date()) =>
+  availableAt(isReady(weekKey(now), now) ? weekKey(new Date(now.getTime() + 7 * DAY_MS)) : weekKey(now))
 
 /** "27 Jul – 2 Aug" */
 export function weekLabel(key) {

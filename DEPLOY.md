@@ -9,7 +9,7 @@ Total time: about 45 minutes, most of it waiting for DNS.
 
 ## Step 1b. Run the migrations (5 min — do this first)
 
-Fifteen migrations to run in **SQL Editor → New query**, **in order**.
+Sixteen migrations to run in **SQL Editor → New query**, **in order**.
 
 > ⚠️ Each file is idempotent on its own, but the ORDER matters and re-running
 > an early one alone is not harmless. `0002` and `0004` both define
@@ -68,8 +68,14 @@ Fifteen migrations to run in **SQL Editor → New query**, **in order**.
     the story can show a collage. The cheat meals used to be a number in a
     grid and nothing else. **This is the newest `squad_recap()`** — if you
     ever re-run `0012`, `0014` or `0015`, finish by running this one.
+16. `0017_recap_local_evening.sql` — makes "Sunday at 6pm" mean six in the
+    evening. The gate was Sunday **18:00 UTC**, which is 8pm in Stuttgart and
+    1pm in Lima — nobody's six o'clock. It is now 18:00 `Europe/Berlin`, a
+    named zone rather than a fixed offset, so it stays at 6pm local on both
+    sides of the clock change. It only ever opens a week *earlier* than
+    before, so nothing that was readable stops being readable.
 
-Confirm all fifteen:
+Confirm all sixteen:
 
 ```sql
 select tgname from pg_trigger where tgname = 'on_auth_user_created';
@@ -116,16 +122,30 @@ from pg_constraint where conname = 'reactions_emoji_check';
 -- run after it and won, so re-run 0016.
 select prosrc like '%cheater%' as has_cheater_of_the_week
 from pg_proc where proname = 'squad_recap';
+
+-- 0017: the unlock must be six in the evening, Berlin time. Expect
+-- 2026-08-16 16:00+00 in summer and 17:00+00 in winter — both 18:00 local.
+select public.recap_available_at('2026-08-10') as summer_unlock,
+       public.recap_available_at('2026-01-05') as winter_unlock;
 ```
 
 ### The weekly recap, and why there is no cron job
 
 `squad_recap()` computes a week on demand from the posts, reactions and
 weigh-ins already in the database, and returns `null` until **Sunday 18:00
-UTC** of that week. From the reader's side that is exactly "generated Sunday
-at 6pm" — nothing to see before, the week appears after — but there is no
-scheduled job that can quietly stop running, no backfill to write, and a
-recap from three months ago still renders.
+Europe/Berlin** of that week. From the reader's side that is exactly
+"generated Sunday at 6pm" — nothing to see before, the week appears after —
+but there is no scheduled job that can quietly stop running, no backfill to
+write, and a recap from three months ago still renders.
+
+The client picks its week with `currentRecapKey()`: the most recent week that
+has actually opened. From Sunday 6pm that is the week ending that evening;
+the rest of the week it is the one before. It used to ask for
+`lastWeekKey()` unconditionally — always a week behind — so on Sunday evening
+the new recap existed in the database and the app kept showing the previous
+one until Monday. If a reader ever says the recap "did not happen at 6pm",
+that is the shape of the bug to look for: nothing to restart, because there
+is nothing running.
 
 If you later want it materialised — to send a push notification on Sunday
 evening, say — enable `pg_cron` under **Database → Extensions** and schedule
